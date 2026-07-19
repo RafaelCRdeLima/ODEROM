@@ -1,0 +1,15 @@
+[package]
+name = "oderom-jit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ODEROM Marco 5 -- SSA IR with CSE, compiled from oderom_expr::Expr and interpreted"
+
+[dependencies]
+oderom-expr = { path = "../oderom-expr" }
+rustc-hash = "1"
+thiserror = "1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"

@@ -8,6 +8,7 @@ members = [
     "oderom-expr",
     "oderom-components",
     "oderom-egraph",
+    "oderom-jit",
 ]
 
 [workspace.package]

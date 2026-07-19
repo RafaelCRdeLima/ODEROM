@@ -409,6 +409,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oderom-jit"
+version = "0.1.0"
+dependencies = [
+ "oderom-expr",
+ "rustc-hash",
+ "thiserror",
+]
+
+[[package]]
 name = "oderom-types"
 version = "0.1.0"
 dependencies = [
