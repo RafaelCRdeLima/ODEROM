@@ -1,27 +1,20 @@
-//! Backtracking search over the stabilizer chain for the minimal word.
+//! Search over the group enumerated by [`oderom_core::Bsgs::for_each_element`]
+//! for the lexicographically minimal word.
 //!
 //! Reference: Butler, "Fundamental Algorithms for Permutation Groups",
 //! LNCS 559 (1991); R. Portugal, "An algorithm to simplify tensor
 //! expressions", J. Phys. A 32 (1999) 7779, sec. 3.
 //!
-//! Every group element factors uniquely as a product of one coset
-//! representative per stabilizer-chain level, `g = t_{L-1}.then(..).then(t_0)`
-//! (the deepest level's representative applied first, level 0's applied
-//! last -- the reverse of the order `Bsgs::strip` peels them off in), so
-//! recursing level by level and choosing a transversal representative at
-//! each one enumerates the whole group exactly once via the BSGS -- no
-//! representative is ever visited twice, unlike a naive walk over raw
-//! generator products.
-//!
-//! PERF: this recursion does not yet prune. A representative chosen at an
-//! early level already fixes the word entry at every canonical position
-//! whose *both* endpoints (for a dummy pair) lie in blocks resolved so
-//! far; comparing that partial prefix against the best complete word seen
-//! so far and cutting the branch when it is already worse is the classical
-//! Butler-Portugal pruning step ("podar com o gerador forte"). Omitted
-//! here because full enumeration already meets the Marco 1 performance
-//! budget at the group orders `oderom-canon` deals with (a few times
-//! 10^5); revisit if Marco 2 pushes tensor degree higher.
+//! PERF: `for_each_element` does not prune. A representative chosen at an
+//! early stabilizer-chain level already fixes the word entry at every
+//! canonical position whose *both* endpoints (for a dummy pair) lie in
+//! blocks resolved so far; comparing that partial prefix against the best
+//! complete word seen so far and cutting the branch when it is already
+//! worse is the classical Butler-Portugal pruning step ("podar com o
+//! gerador forte"). Omitted here because full enumeration already meets
+//! the Marco 1 performance budget at the group orders `oderom-canon`
+//! deals with (a few times 10^5); revisit if a later marco pushes tensor
+//! degree higher.
 
 use crate::word::{compute_word, Labeling, Word};
 use oderom_core::{Bsgs, SignedPerm};
@@ -44,7 +37,7 @@ pub(crate) fn search_minimal(bsgs: &Bsgs, labeling: &Labeling) -> SearchResult {
     let mut best_rep: Option<SignedPerm> = None;
     let mut signs_at_best: FxHashSet<i8> = FxHashSet::default();
 
-    let mut visit = |g: &SignedPerm| {
+    bsgs.for_each_element(|g| {
         let w = compute_word(g, labeling);
         match &best_word {
             None => {
@@ -63,33 +56,10 @@ pub(crate) fn search_minimal(bsgs: &Bsgs, labeling: &Labeling) -> SearchResult {
             }
             _ => {}
         }
-    };
-
-    recurse(&bsgs.levels, SignedPerm::identity(bsgs.degree), &mut visit);
+    });
 
     SearchResult {
         representative: best_rep.expect("group always contains at least the identity"),
         is_zero: signs_at_best.len() > 1,
-    }
-}
-
-fn recurse(levels: &[oderom_core::SchreierLevel], acc: SignedPerm, visit: &mut impl FnMut(&SignedPerm)) {
-    match levels.split_first() {
-        None => visit(&acc),
-        Some((level, rest)) => {
-            for rep in level.transversal.values() {
-                // Every g in G factors as g = t_{L-1}.then(..).then(t_1).then(t_0)
-                // (deepest level applied first, level 0 last) -- the reverse of
-                // strip()'s peeling order (strip removes t_0 first). Composing
-                // `rep.then(acc)` here, with `rep` from the current (shallower)
-                // level, keeps it to the *right* of whatever deeper levels
-                // contribute, building exactly that product as the recursion
-                // unwinds. Getting this backwards silently drops group elements
-                // from the enumeration without any error -- caught by
-                // `prop_canon.rs` failing on a case a hand derivation confirmed
-                // should have canonicalized identically.
-                recurse(rest, rep.then(&acc), visit);
-            }
-        }
     }
 }

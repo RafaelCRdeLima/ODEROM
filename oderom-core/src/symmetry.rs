@@ -154,6 +154,38 @@ impl Bsgs {
         let h = self.strip(g);
         h.perm.is_identity() && (h.sign == 1 || self.global_negation)
     }
+
+    /// Calls `visit` once for every element of the group, in an
+    /// unspecified but complete, non-repeating order.
+    ///
+    /// Every element factors uniquely as a product of one transversal
+    /// representative per stabilizer-chain level,
+    /// `g = t_{L-1}.then(..).then(t_0)` (deepest level applied first,
+    /// level 0 last -- the reverse of the order [`Bsgs::strip`] peels
+    /// them off in; get this backwards and elements silently go missing
+    /// from the enumeration without any error, which is exactly the bug
+    /// this method's first draft, living in `oderom-canon`, had). If
+    /// [`Bsgs::global_negation`] holds, every element enumerated this way
+    /// also occurs with the opposite sign, so each is additionally
+    /// visited with its sign flipped.
+    pub fn for_each_element(&self, mut visit: impl FnMut(&SignedPerm)) {
+        fn recurse(levels: &[SchreierLevel], acc: SignedPerm, visit: &mut impl FnMut(&SignedPerm)) {
+            match levels.split_first() {
+                None => visit(&acc),
+                Some((level, rest)) => {
+                    for rep in level.transversal.values() {
+                        recurse(rest, rep.then(&acc), visit);
+                    }
+                }
+            }
+        }
+        recurse(&self.levels, SignedPerm::identity(self.degree), &mut visit);
+        if self.global_negation {
+            recurse(&self.levels, SignedPerm::identity(self.degree), &mut |g| {
+                visit(&SignedPerm { perm: g.perm.clone(), sign: -g.sign });
+            });
+        }
+    }
 }
 
 /// Convenience: the totally antisymmetric generator set for an `n`-index
@@ -231,6 +263,39 @@ mod tests {
         let bsgs = Bsgs::from_generators(2, &[gen(2, 0, 1, 1), gen(2, 0, 1, -1)]);
         assert!(bsgs.global_negation);
         assert_eq!(bsgs.order(), 4); // {id+, id-, swap+, swap-}
+    }
+
+    #[test]
+    fn for_each_element_visits_every_group_element_exactly_once() {
+        let gens = totally_antisymmetric_generators(3);
+        let bsgs = Bsgs::from_generators(3, &gens);
+        let mut seen: FxHashSet<SignedPerm> = FxHashSet::default();
+        let mut count = 0u128;
+        bsgs.for_each_element(|g| {
+            assert!(bsgs.contains(g));
+            assert!(seen.insert(g.clone()), "visited {g:?} twice");
+            count += 1;
+        });
+        assert_eq!(count, bsgs.order());
+        assert_eq!(seen.len() as u128, bsgs.order());
+    }
+
+    #[test]
+    fn for_each_element_doubles_signs_under_global_negation() {
+        let bsgs = Bsgs::from_generators(2, &[gen(2, 0, 1, 1), gen(2, 0, 1, -1)]);
+        let mut seen: FxHashSet<SignedPerm> = FxHashSet::default();
+        let mut count = 0u128;
+        bsgs.for_each_element(|g| {
+            assert!(bsgs.contains(g));
+            assert!(seen.insert(g.clone()));
+            count += 1;
+        });
+        assert_eq!(count, 4);
+        // Both signs of the identity permutation and both signs of the swap.
+        assert!(seen.contains(&SignedPerm::identity(2)));
+        assert!(seen.contains(&SignedPerm::new(Perm::identity(2), -1)));
+        assert!(seen.contains(&gen(2, 0, 1, 1)));
+        assert!(seen.contains(&gen(2, 0, 1, -1)));
     }
 
     #[test]
