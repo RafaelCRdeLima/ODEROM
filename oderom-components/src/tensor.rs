@@ -16,16 +16,16 @@ use oderom_expr::Expr;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
-type IndexTuple = SmallVec<[u8; 4]>;
+pub(crate) type IndexTuple = SmallVec<[u8; 4]>;
 
-enum Orbit {
+pub(crate) enum Orbit {
     /// The symmetry group forces every component in this orbit to equal
     /// its own negative.
     Zero,
     Representative(IndexTuple, i8),
 }
 
-fn canonical_indices(bsgs: &Bsgs, indices: &[u8]) -> Orbit {
+pub(crate) fn canonical_indices(bsgs: &Bsgs, indices: &[u8]) -> Orbit {
     let mut best: Option<IndexTuple> = None;
     let mut best_sign = 1i8;
     let mut signs_at_best: FxHashSet<i8> = FxHashSet::default();

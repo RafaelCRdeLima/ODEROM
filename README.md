@@ -178,6 +178,51 @@ the expected next vertex, which would have caught a mistake in that
 derivation. It passed on the first run, at 20,000 RK4 steps per side,
 well within the `1e-3` tolerance proposed in DESIGN-M5.md (D5.3).
 
+## UI status (Camada A)
+
+Not a roadmap marco -- the user asked, after Marco 5, whether the project
+could show symbolic differential-geometry results at all. It turned out
+it couldn't: `oderom_expr::Expr` (the CAS behind Christoffel/Riemann/
+Ricci/metric components) had no `Display`, only the derived `Debug`
+dump of its enum tree, and the CLI's only subcommand (`canon`) only
+reaches Marco 1's abstract tensor layer. Proposed in DESIGN-UI.md as
+"Camada A" (readable text, before any decision about a graphical UI),
+then given three corrections by the user before implementation:
+
+1. **A `Render` trait with targets, not just `Display`.**
+   `oderom_core::render::{Render, Target}` (`Unicode`/`Latex`/`Json`),
+   implemented for `Scalar` and `Expr`; `Display for Expr` wraps
+   `render(Target::Unicode)`. LaTeX is not an optional target -- it's
+   explicitly "a razão de ser do projeto" (the reason the project
+   exists). The trait lives in `oderom-core`, the one crate every other
+   crate already depends on, so any future type anywhere in the
+   workspace can implement it without new inter-crate dependencies.
+2. **The real content is elision, not formatting.** Showing a tensor
+   like Riemann means showing only its independent components under the
+   head's declared symmetry group, annotated with orbit size, with
+   identically-zero components collapsed into one count and output
+   truncated explicitly -- never all `dim^rank` raw components.
+   `oderom_components::render` (`classify_tensor`/`classify_grid` +
+   `render_classes`) implements this by reusing the exact
+   `Bsgs`/orbit-representative logic `ComponentTensor::set` already uses
+   for storage compression -- it lives next to `ComponentTensor`, not in
+   the CLI, because "which components are independent" is a property of
+   the symmetry group, not of where a result gets printed.
+3. **Testing discipline.** No correctness test (Kretschmann, Ricci,
+   Marco 3's cross-chart metric agreement, Bianchi, holonomy) compares a
+   rendered string -- those all still check `Expr`/structural equality.
+   The new renderer tests are golden strings, and are documented inline
+   as testing the renderer's output format, not any mathematical claim.
+
+Not yet done: wiring any of this into the CLI (new subcommands, an
+extended `prelude.od` grammar for declaring a metric) -- that depended on
+an open question (DESIGN-UI.md's D-UI.3, the metric-file format) the
+user hadn't confirmed when approving Camada A, so it was left for a
+follow-up rather than guessed. A graphical UI is explicitly out of scope
+for now; the user's working hypothesis is a Jupyter kernel rather than a
+standalone GUI, which is the concrete reason the `Json` target exists
+already instead of being deferred.
+
 ## Marco 1 status against the acceptance table
 
 **Canonicalization correctness** -- all pass, including the property test:
