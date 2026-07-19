@@ -389,6 +389,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oderom-egraph"
+version = "0.1.0"
+dependencies = [
+ "oderom-canon",
+ "oderom-core",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "oderom-expr"
 version = "0.1.0"
 dependencies = [
