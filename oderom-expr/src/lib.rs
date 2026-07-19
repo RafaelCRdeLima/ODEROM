@@ -21,6 +21,7 @@
 
 mod diff;
 mod normalize;
+mod render;
 mod rationalize;
 mod substitute;
 

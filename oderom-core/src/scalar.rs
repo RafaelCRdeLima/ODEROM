@@ -2,6 +2,7 @@
 //! symbolic constants: `Scalar` is exactly `Q`, represented as a reduced
 //! `i64` fraction.
 
+use crate::render::{Render, Target};
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -114,6 +115,18 @@ impl fmt::Debug for Scalar {
     }
 }
 
+impl Render for Scalar {
+    fn render(&self, target: Target) -> String {
+        match target {
+            Target::Unicode => self.to_string(),
+            Target::Latex if self.den == 1 => format!("{}", self.num),
+            Target::Latex if self.num < 0 => format!("-\\frac{{{}}}{{{}}}", -self.num, self.den),
+            Target::Latex => format!("\\frac{{{}}}{{{}}}", self.num, self.den),
+            Target::Json => format!(r#"{{"num":{},"den":{}}}"#, self.num, self.den),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +171,20 @@ mod tests {
     #[should_panic]
     fn zero_denominator_panics() {
         Scalar::new(1, 0);
+    }
+
+    /// Golden strings: this tests the renderer's *output format*, not
+    /// any mathematical claim (there is nothing to compute here) -- the
+    /// distinction that matters everywhere else in this project, where
+    /// correctness is always checked by comparing canonical/structural
+    /// forms, never rendered strings.
+    #[test]
+    fn render_targets() {
+        assert_eq!(Scalar::new(3, 1).render(Target::Unicode), "3");
+        assert_eq!(Scalar::new(3, 4).render(Target::Unicode), "3/4");
+        assert_eq!(Scalar::new(3, 1).render(Target::Latex), "3");
+        assert_eq!(Scalar::new(3, 4).render(Target::Latex), "\\frac{3}{4}");
+        assert_eq!(Scalar::new(-3, 4).render(Target::Latex), "-\\frac{3}{4}");
+        assert_eq!(Scalar::new(3, 4).render(Target::Json), r#"{"num":3,"den":4}"#);
     }
 }
