@@ -7,6 +7,7 @@ description = "ODEROM Marco 1 -- geometric type judgments over oderom-core terms
 
 [dependencies]
 oderom-core = { path = "../oderom-core" }
+oderom-expr = { path = "../oderom-expr" }
 thiserror = "1"
 
 [dev-dependencies]

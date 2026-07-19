@@ -6,7 +6,7 @@ pub mod domain;
 pub mod error;
 pub mod judgment;
 
-pub use domain::Domain;
+pub use domain::{Domain, Predicate};
 pub use error::TypeError;
 pub use judgment::{typecheck_monomial, typecheck_polynomial, ExprType};
 
