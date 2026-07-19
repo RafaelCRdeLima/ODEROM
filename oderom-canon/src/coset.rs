@@ -5,7 +5,9 @@
 //! expressions", J. Phys. A 32 (1999) 7779, sec. 3.
 //!
 //! Every group element factors uniquely as a product of one coset
-//! representative per stabilizer-chain level (`g = t_0.then(t_1)...`), so
+//! representative per stabilizer-chain level, `g = t_{L-1}.then(..).then(t_0)`
+//! (the deepest level's representative applied first, level 0's applied
+//! last -- the reverse of the order `Bsgs::strip` peels them off in), so
 //! recursing level by level and choosing a transversal representative at
 //! each one enumerates the whole group exactly once via the BSGS -- no
 //! representative is ever visited twice, unlike a naive walk over raw
@@ -76,7 +78,17 @@ fn recurse(levels: &[oderom_core::SchreierLevel], acc: SignedPerm, visit: &mut i
         None => visit(&acc),
         Some((level, rest)) => {
             for rep in level.transversal.values() {
-                recurse(rest, acc.then(rep), visit);
+                // Every g in G factors as g = t_{L-1}.then(..).then(t_1).then(t_0)
+                // (deepest level applied first, level 0 last) -- the reverse of
+                // strip()'s peeling order (strip removes t_0 first). Composing
+                // `rep.then(acc)` here, with `rep` from the current (shallower)
+                // level, keeps it to the *right* of whatever deeper levels
+                // contribute, building exactly that product as the recursion
+                // unwinds. Getting this backwards silently drops group elements
+                // from the enumeration without any error -- caught by
+                // `prop_canon.rs` failing on a case a hand derivation confirmed
+                // should have canonicalized identically.
+                recurse(rest, rep.then(&acc), visit);
             }
         }
     }

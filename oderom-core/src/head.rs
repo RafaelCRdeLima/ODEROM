@@ -32,7 +32,9 @@ pub struct SlotSig {
     pub dim: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// Ordered by declaration order in the `Registry`. `oderom-canon` relies on
+/// this to build a canonical, input-order-independent factor layout.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct HeadId(pub(crate) u32);
 
 /// A declared tensor head: its slot signature and the symmetry group

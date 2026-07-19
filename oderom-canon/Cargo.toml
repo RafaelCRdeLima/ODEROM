@@ -14,6 +14,7 @@ rustc-hash = "1"
 [dev-dependencies]
 proptest = "1"
 criterion = "0.5"
+oderom-types = { path = "../oderom-types" }
 
 [[bench]]
 name = "canon_bench"

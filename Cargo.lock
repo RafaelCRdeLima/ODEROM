@@ -349,6 +349,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "oderom-core",
+ "oderom-types",
  "proptest",
  "rustc-hash",
  "smallvec",
@@ -361,7 +362,7 @@ version = "0.1.0"
 dependencies = [
  "oderom-canon",
  "oderom-core",
- "oderom-types",
+ "smallvec",
  "thiserror",
 ]
 
@@ -381,6 +382,7 @@ version = "0.1.0"
 dependencies = [
  "oderom-core",
  "proptest",
+ "smallvec",
  "thiserror",
 ]
 
