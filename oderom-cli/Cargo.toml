@@ -11,9 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 oderom-core = { path = "../oderom-core" }
-oderom-types = { path = "../oderom-types" }
 oderom-canon = { path = "../oderom-canon" }
 thiserror = "1"
+smallvec = "1"
 
 [lints.rust]
 warnings = "deny"

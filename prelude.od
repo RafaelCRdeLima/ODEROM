@@ -1,0 +1,10 @@
+# Default Marco 1 prelude: a 4-manifold with its tangent bundle, and the
+# three tensor heads exercised by the acceptance tests -- Riemann, the
+# metric, and the rank-3 Levi-Civita symbol.
+
+manifold M dim 4
+bundle TM on M dim 4
+
+head R : TM*, TM*, TM*, TM* symmetry (1 2)- (3 4)- (1 3)(2 4)+
+head g : TM*, TM* symmetry (1 2)+
+head eps : TM*, TM*, TM* symmetry antisymmetric
