@@ -370,9 +370,9 @@ dependencies = [
 name = "oderom-components"
 version = "0.1.0"
 dependencies = [
- "oderom-canon",
  "oderom-core",
  "oderom-expr",
+ "oderom-types",
  "rustc-hash",
  "smallvec",
  "thiserror",
@@ -403,6 +403,7 @@ name = "oderom-types"
 version = "0.1.0"
 dependencies = [
  "oderom-core",
+ "oderom-expr",
  "proptest",
  "smallvec",
  "thiserror",

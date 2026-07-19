@@ -1,5 +1,7 @@
 # ODEROM — DESIGN-M3.md (Marco 3: atlas)
 
+**Status: implementado.** Ver [README.md](README.md#marco-3-status). D3.1 foi confirmada como proposta (sem SMT de verdade agora). A verificação de invariância da métrica precisou de uma peça a mais do que este documento previa: `oderom-expr` ganhou `rationalize` (numerador/denominador explícitos via recursão, em vez de inferir a divisão por casamento de padrão em `normalize`), depois que uma correção local que resolvia o caso da esfera quebrou o teste de Kretschmann do Marco 2 — os dois precisam de comportamentos que se contradizem dentro do `normalize()` de reescrita local.
+
 Mesma regra dos marcos anteriores: proposta, não começo de implementação. Antes de tudo, uma decisão que quero seu ok explícito porque muda a política de dependências do projeto.
 
 ## 0. Escopo declarado

@@ -7,7 +7,7 @@ description = "ODEROM Marco 2 -- charts, component tensors, Christoffel/Riemann/
 
 [dependencies]
 oderom-core = { path = "../oderom-core" }
-oderom-canon = { path = "../oderom-canon" }
+oderom-types = { path = "../oderom-types" }
 oderom-expr = { path = "../oderom-expr" }
 thiserror = "1"
 smallvec = "1"
