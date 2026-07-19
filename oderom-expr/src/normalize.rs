@@ -293,13 +293,38 @@ fn combine_over_common_denominators(terms: Vec<Expr>) -> Vec<Expr> {
         // which simplify_mul's distribution expands unconditionally), so
         // it can no longer be compared against `base` by matching bases
         // the way ordinary cancellation does. But a numerator that is an
-        // exact multiple of `base^(-min_k)` once *that* is expanded the
-        // same way is exactly what a fully-collapsing rational function
-        // (like the Kretschmann scalar) produces, term for term -- so
-        // check for that directly instead of hoping some other rewrite
-        // stumbles onto it.
-        if let Some(q) = divide_by_expanded_power(&combined_numerator, &base, -min_k) {
-            plain.push(q);
+        // exact multiple of some power of `base`, once that power is
+        // itself expanded the same way, is exactly what a
+        // fully-collapsing rational function (Kretschmann, or a metric
+        // pullback through a chart transition) produces, term for term --
+        // so check for that directly instead of hoping some other
+        // rewrite stumbles onto it. Two exponents matter: `-min_k`
+        // (exactly enough to clear the denominator) and, since the
+        // numerator can carry a *higher* power of `base` than that
+        // (nothing bounds it above), `numerator's own term count - 1` --
+        // the only other exponent an expanded 2-term `base^p` could
+        // possibly match a given monomial count at.
+        let mut candidates = vec![-min_k];
+        let overshoot = as_term_list(&combined_numerator).len() as i32 - 1;
+        if overshoot > 0 && overshoot != -min_k {
+            candidates.push(overshoot);
+        }
+        let found = candidates
+            .into_iter()
+            .find_map(|p| divide_by_expanded_power(&combined_numerator, &base, p).map(|q| (p, q)));
+        if let Some((p, q)) = found {
+            let final_exp = p + min_k;
+            plain.push(if final_exp == 0 {
+                q
+            } else {
+                let mut factors = match q {
+                    Expr::Mul(fs) => fs,
+                    other => vec![other],
+                };
+                factors.push(Expr::Pow(Box::new(base), final_exp));
+                factors.sort();
+                Expr::Mul(factors)
+            });
             continue;
         }
 
@@ -458,6 +483,17 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
     // exactly this case instead -- fixed by moving sign canonicalization
     // into the grouping step above rather than the output, so it no
     // longer fights distribution.
+    //
+    // Tried restricting this to fire only when `sum_base` is the *lone*
+    // sum-typed base in the product (blocking e.g. `R^2` from expanding
+    // against an unrelated `(1+R)^-2`, which glues the resulting
+    // monomials to `(1+R)^-2` with no cancellation to show for it). That
+    // broke the Kretschmann computation, which genuinely needs
+    // distribution while multiple unrelated sums are in play elsewhere
+    // in the same product. The two needs are in real tension; resolving
+    // it needs an explicit numerator/denominator representation
+    // (`rationalize`) rather than another local rule here -- see that
+    // function's docs.
     if let Some((sum_base, exp)) = bases.iter().find(|(b, e)| matches!(b, Expr::Add(_)) && **e > 0) {
         let sum_base = sum_base.clone();
         let exp = *exp;

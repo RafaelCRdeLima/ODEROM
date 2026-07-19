@@ -21,10 +21,12 @@
 
 mod diff;
 mod normalize;
+mod rationalize;
 mod substitute;
 
 pub use diff::diff;
 pub use normalize::normalize;
+pub use rationalize::rationalize;
 pub use substitute::substitute;
 
 use oderom_core::Scalar;
