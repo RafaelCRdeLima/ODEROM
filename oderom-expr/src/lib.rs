@@ -1,4 +1,6 @@
-//! `oderom-expr` -- Marco 2: symbolic scalar expressions.
+//! `oderom-expr` -- symbolic scalar expressions (Marco 2), plus variable
+//! substitution ([`substitute`], Marco 3: expressing one chart's
+//! components in another's coordinates via a transition map).
 //!
 //! A tensor's *component* in a chart (e.g. `g_tt = -(1 - 2M/r)`) is not a
 //! rational number like `oderom_core::Scalar` -- it is an element of
@@ -19,9 +21,11 @@
 
 mod diff;
 mod normalize;
+mod substitute;
 
 pub use diff::diff;
 pub use normalize::normalize;
+pub use substitute::substitute;
 
 use oderom_core::Scalar;
 use std::cmp::Ordering;
