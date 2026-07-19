@@ -1,5 +1,7 @@
 # ODEROM — DESIGN-M2.md (Marco 2: componentes)
 
+**Status: implementado.** Ver [README.md](README.md#marco-2-status) para o resultado (Kretschmann de Schwarzschild = 48M²/r⁶, Ricci = 0) e para o que o design original abaixo subestimou — o normalizador de `oderom-expr` precisou de bem mais que "colige termos semelhantes" para dar conta da soma de Kretschmann (denominador comum + divisão por potência expandida), documentado em `oderom-expr/src/normalize.rs`. Decisões D-M2.1–D-M2.3 abaixo foram tomadas como propostas (métrica só diagonal; `Expr` em crate própria; teste por igualdade estrutural pós-normalização) sem objeção explícita antes de eu prosseguir.
+
 Mesma regra do Marco 1: isto é uma proposta, não um começo de implementação. Ao final há decisões e questões abertas — quero seu ok (e respostas às questões) antes de escrever qualquer `struct`.
 
 ## 0. O que muda de patamar em relação ao Marco 1

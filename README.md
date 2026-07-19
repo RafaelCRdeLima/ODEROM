@@ -1,21 +1,23 @@
-# ODEROM -- Marco 1
+# ODEROM
 
 Operational Differential Engine for Riemannian Object Manipulation. See
-[DESIGN.md](DESIGN.md) for the architecture and the representation
-decisions behind it. This file tracks what Marco 1 (the abstract core:
-term representation, type judgment, Butler-Portugal canonicalization, and
-the `oderom canon` CLI) actually delivered.
+[DESIGN.md](DESIGN.md) (Marco 1) and [DESIGN-M2.md](DESIGN-M2.md) (Marco 2)
+for the architecture and the representation decisions behind it. This file
+tracks what each marco actually delivered.
 
 ## Layout
 
 ```
-oderom-core/    1.1 -- contraction-graph terms, tensor heads, Schreier-Sims BSGS
-oderom-types/   1.2 -- the geometric type judgment
-oderom-canon/   1.3 -- Butler-Portugal canonicalization
-  tests/          acceptance table + the canon(g*x)==canon(x) property test
-  benches/        criterion performance acceptance criteria
-oderom-cli/     1.4 -- the `oderom canon` binary
-prelude.od      default declarations: M, TM, R (Riemann), g (metric), eps (Levi-Civita_3)
+oderom-core/        1.1 -- contraction-graph terms, tensor heads, Schreier-Sims BSGS
+oderom-types/        1.2 -- the geometric type judgment
+oderom-canon/        1.3 -- Butler-Portugal canonicalization
+  tests/               acceptance table + the canon(g*x)==canon(x) property test
+  benches/             criterion performance acceptance criteria
+oderom-cli/          1.4 -- the `oderom canon` binary
+oderom-expr/         2.1 -- symbolic scalar CAS: Expr, diff, normalize
+oderom-components/   2.2 -- Chart, ComponentTensor, Christoffel/Riemann/Ricci
+  tests/               Schwarzschild acceptance tests (Kretschmann, Ricci=0)
+prelude.od           default declarations: M, TM, R (Riemann), g (metric), eps (Levi-Civita_3)
 ```
 
 One deviation from DESIGN.md's proposed layout: the integration tests
@@ -33,7 +35,36 @@ cargo bench -p oderom-canon       # performance acceptance criteria
 cargo run -p oderom-cli -- canon "R[a,b,c,d] R[c,d,a,b]"
 ```
 
-## Status against the acceptance table
+## Marco 2 status
+
+**Kretschmann of Schwarzschild = 48M^2/r^6** (`oderom-components/tests/schwarzschild.rs`)
+-- passes, along with a second check that Schwarzschild's Ricci tensor and
+scalar are identically zero (it's a vacuum solution). Both are computed
+from the metric's components by the standard formulas (see
+`oderom-components/src/curvature.rs`), with the metric inverted under the
+diagonal-only restriction from DESIGN-M2.md's D-M2.1, and the final
+covariant Riemann tensor stored via `ComponentTensor`, which keeps only
+one `Expr` per symmetry orbit rather than one per raw index tuple (21
+independent components in 4D for Riemann's slot symmetry alone, without
+imposing the first Bianchi identity -- see the comment at that assertion
+in the test for why 21 and not the more commonly quoted 20).
+
+Getting there needed considerably more from `oderom-expr`'s normalizer
+than first planned. The original design (`normalize()` folds constants
+and collects like terms/bases, nothing else) could not reduce the
+Kretschmann sum at all -- Christoffel/Riemann accumulate several distinct
+negative powers of `(1 - 2M/r)` that only cancel once brought to a common
+denominator, and the resulting numerator only collapses to a single
+monomial once recognized as an exact multiple of `(1-2M/r)^n`'s own
+expansion. Both are now implemented in `normalize.rs`
+(`combine_over_common_denominators`, `divide_by_expanded_power`), and
+getting them to coexist with cancellation and sign handling without
+recursing forever took three real bugs and fixes along the way -- each
+one is documented in place, in `oderom-expr/src/normalize.rs`'s module
+docs and the functions themselves, because each was exactly the kind of
+thing a future "simplification" could plausibly reintroduce.
+
+## Marco 1 status against the acceptance table
 
 **Canonicalization correctness** -- all pass, including the property test:
 
