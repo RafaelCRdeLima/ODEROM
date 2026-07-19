@@ -93,7 +93,11 @@ impl AbstractIndex {
 /// A single term: a coefficient, a list of tensor-head factors, the
 /// contraction graph among their slots, and the free (uncontracted) slots
 /// with the labels the user gave them.
-#[derive(Clone, Debug)]
+///
+/// `Eq`/`Hash` compare the coefficient too, so two monomials that are the
+/// same shape but scaled differently are *not* equal; `oderom-canon` and
+/// `oderom-components` rely on this for canonical-form-keyed caches.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Monomial {
     coeff: Scalar,
     factors: SmallVec<[Factor; 4]>,
@@ -167,6 +171,12 @@ impl Monomial {
                 }
             }
         }
+
+        // Sorted by SlotId so that two Monomials built from the same free
+        // set in a different input order compare/hash equal -- load-bearing
+        // for oderom-components' canonical-form-keyed cache (Marco 2).
+        let mut free = free;
+        free.sort_by_key(|(slot, _)| *slot);
 
         Ok(Monomial { coeff, factors, contractions, free })
     }
@@ -303,5 +313,30 @@ mod tests {
         let m = Monomial::try_new(Scalar::ONE, factors, contractions, vec![], &reg).unwrap();
         assert_eq!(m.contractions().len(), 2);
         assert!(m.free().is_empty());
+    }
+
+    #[test]
+    fn equality_and_hash_are_independent_of_free_list_input_order() {
+        let (reg, head) = riemann_registry();
+        let build = |order: [(u8, &str); 4]| {
+            let factors: SmallVec<[Factor; 4]> = smallvec::smallvec![Factor { head }];
+            let free = order
+                .into_iter()
+                .map(|(slot, name)| (SlotId { factor: 0, slot }, AbstractIndex::new(name)))
+                .collect();
+            Monomial::try_new(Scalar::ONE, factors, Matching::default(), free, &reg).unwrap()
+        };
+        let m1 = build([(0, "a"), (1, "b"), (2, "c"), (3, "d")]);
+        let m2 = build([(3, "d"), (1, "b"), (0, "a"), (2, "c")]);
+        assert_eq!(m1, m2);
+
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let hash_of = |m: &Monomial| {
+            let mut h = DefaultHasher::new();
+            m.hash(&mut h);
+            h.finish()
+        };
+        assert_eq!(hash_of(&m1), hash_of(&m2));
     }
 }
