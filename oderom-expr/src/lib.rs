@@ -53,18 +53,22 @@ impl Expr {
         Expr::Rational(Scalar::ONE)
     }
 
+    /// The integer `n` as an `Expr`.
     pub fn int(n: i64) -> Expr {
         Expr::Rational(Scalar::from_int(n))
     }
 
+    /// The rational `num/den` as an `Expr`.
     pub fn rational(num: i64, den: i64) -> Expr {
         Expr::Rational(Scalar::new(num, den))
     }
 
+    /// A coordinate variable named `name`.
     pub fn var(name: impl Into<String>) -> Expr {
         Expr::Var(name.into())
     }
 
+    /// `self` raised to the integer power `exp`.
     pub fn pow(self, exp: i32) -> Expr {
         Expr::Pow(Box::new(self), exp)
     }
@@ -77,6 +81,9 @@ impl Expr {
         Expr::Cos(Box::new(self))
     }
 
+    /// Whether this is literally the rational zero (not whether it
+    /// *simplifies* to zero -- call [`normalize`] first if it might not
+    /// already be in normal form).
     pub fn is_zero(&self) -> bool {
         matches!(self, Expr::Rational(s) if s.is_zero())
     }
