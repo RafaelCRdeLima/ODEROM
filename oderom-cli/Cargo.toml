@@ -1,0 +1,20 @@
+[package]
+name = "oderom-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ODEROM Marco 1 -- oderom canon CLI"
+
+[[bin]]
+name = "oderom"
+path = "src/main.rs"
+
+[dependencies]
+oderom-core = { path = "../oderom-core" }
+oderom-types = { path = "../oderom-types" }
+oderom-canon = { path = "../oderom-canon" }
+thiserror = "1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
