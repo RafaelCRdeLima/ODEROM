@@ -23,6 +23,7 @@ impl Scalar {
         Self::reduce(num, den)
     }
 
+    /// Builds the integer `n` as a `Scalar`.
     pub fn from_int(n: i64) -> Self {
         Scalar { num: n, den: 1 }
     }
@@ -42,6 +43,7 @@ impl Scalar {
         self.num
     }
 
+    /// Always positive.
     pub fn denominator(&self) -> i64 {
         self.den
     }

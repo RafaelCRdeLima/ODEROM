@@ -24,13 +24,23 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use word::Layout;
 
+/// The result of canonicalizing a nonzero monomial.
 #[derive(Clone, Debug)]
 pub struct Canonical {
+    /// The input's slots reordered/relabeled into canonical position.
+    /// `monomial.coeff()` already includes `sign`, so this alone
+    /// represents the same tensor as the input.
     pub monomial: Monomial,
+    /// The permutation of the point space (see `word` module docs) that
+    /// was applied to reach the canonical form, kept for explanation/
+    /// debugging (e.g. the CLI's slot-swap count).
     pub perm: oderom_core::Perm,
+    /// The sign of the group element that produced `monomial`.
     pub sign: i8,
 }
 
+/// Either a monomial provably equal to its own negative, or its canonical
+/// form.
 #[derive(Clone, Debug)]
 pub enum CanonResult {
     Zero,

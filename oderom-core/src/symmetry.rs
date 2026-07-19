@@ -49,6 +49,7 @@ pub struct Bsgs {
 }
 
 impl Bsgs {
+    /// The BSGS of the trivial (order-1) group on `degree` points.
     pub fn trivial(degree: usize) -> Self {
         Bsgs { degree, levels: Vec::new(), strong_generators: Vec::new(), global_negation: false }
     }
@@ -148,6 +149,7 @@ impl Bsgs {
         h
     }
 
+    /// Whether `g` belongs to the group.
     pub fn contains(&self, g: &SignedPerm) -> bool {
         let h = self.strip(g);
         h.perm.is_identity() && (h.sign == 1 || self.global_negation)

@@ -42,6 +42,7 @@ impl Perm {
         Some(Perm(images.iter().copied().collect()))
     }
 
+    /// The degree `n`: this permutation acts on `{0, .., n-1}`.
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -55,10 +56,12 @@ impl Perm {
         self.0[i as usize]
     }
 
+    /// The one-line notation as a slice: `as_slice()[i]` is the image of `i`.
     pub fn as_slice(&self) -> &[u16] {
         &self.0
     }
 
+    /// Whether every point is fixed.
     pub fn is_identity(&self) -> bool {
         self.0.iter().enumerate().all(|(i, &x)| i as u16 == x)
     }
@@ -70,6 +73,8 @@ impl Perm {
         Perm(self.0.iter().map(|&x| other.image(x)).collect())
     }
 
+    /// The permutation `p` such that `self.then(p)` and `p.then(self)` are
+    /// both the identity.
     pub fn inverse(&self) -> Perm {
         let mut inv: SmallVec<[u16; 12]> = smallvec::smallvec![0; self.0.len()];
         for (i, &img) in self.0.iter().enumerate() {
@@ -124,10 +129,13 @@ pub struct SignedPerm {
 }
 
 impl SignedPerm {
+    /// The identity permutation on `n` points, with sign +1.
     pub fn identity(n: usize) -> Self {
         SignedPerm { perm: Perm::identity(n), sign: 1 }
     }
 
+    /// Builds a `SignedPerm` from a permutation and a sign, which must be
+    /// `+1` or `-1`.
     pub fn new(perm: Perm, sign: i8) -> Self {
         debug_assert!(sign == 1 || sign == -1);
         SignedPerm { perm, sign }
@@ -138,11 +146,15 @@ impl SignedPerm {
         SignedPerm { perm: self.perm.then(&other.perm), sign: self.sign * other.sign }
     }
 
+    /// The inverse element: `self.then(self.inverse())` is the identity.
     pub fn inverse(&self) -> SignedPerm {
         // sign in {+1,-1} is its own inverse, so the inverse element keeps it.
         SignedPerm { perm: self.perm.inverse(), sign: self.sign }
     }
 
+    /// Whether this is the group identity: fixes every point *and* has
+    /// sign +1 (a fixed-point permutation with sign -1 is a different,
+    /// nontrivial element -- see [`crate::symmetry::Bsgs::global_negation`]).
     pub fn is_identity(&self) -> bool {
         self.sign == 1 && self.perm.is_identity()
     }

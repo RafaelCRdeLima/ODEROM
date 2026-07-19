@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Errors surfaced by the `oderom` binary, printed to stderr.
 #[derive(Error, Debug)]
 pub enum CliError {
     #[error("could not read `{path}`: {source}")]

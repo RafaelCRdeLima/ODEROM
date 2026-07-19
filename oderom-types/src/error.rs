@@ -4,6 +4,8 @@
 use oderom_core::{SlotId, SlotSig, Variance};
 use thiserror::Error;
 
+/// Failures of the type judgment `Gamma |- T : Section(...)`, one variant
+/// per rule in [`crate::judgment`].
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     #[error(

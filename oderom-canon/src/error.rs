@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Errors from [`crate::canonicalize`].
 #[derive(Error, Debug)]
 pub enum CanonError {
     /// The canonical monomial failed `oderom-core`'s structural validation.

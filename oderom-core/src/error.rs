@@ -6,6 +6,8 @@
 use crate::monomial::SlotId;
 use thiserror::Error;
 
+/// Structural errors from building a [`crate::monomial::Monomial`],
+/// [`crate::monomial::Matching`], or [`crate::head::TensorHead`].
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum CoreError {
     #[error("name `{0}` is already declared")]

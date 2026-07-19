@@ -9,18 +9,26 @@ use crate::perm::SignedPerm;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+/// An index into a [`Registry`]'s declared manifolds. Meaningless outside
+/// the `Registry` that produced it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ManifoldId(u32);
 
+/// An index into a [`Registry`]'s declared bundles.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct BundleId(u32);
 
+/// A declared manifold: just a name and a literal dimension in Marco 1
+/// (no charts yet).
 #[derive(Clone, Debug)]
 pub struct ManifoldDecl {
     pub name: String,
     pub dim: u32,
 }
 
+/// A declared vector bundle over a manifold. Its dual is not a separate
+/// declaration: a slot's [`crate::head::Variance`] says whether it is a
+/// section of this bundle or of its dual.
 #[derive(Clone, Debug)]
 pub struct BundleDecl {
     pub name: String,
@@ -35,6 +43,8 @@ enum NameEntry {
     Head(HeadId),
 }
 
+/// The interner and declaration store for one session's manifolds,
+/// bundles, and tensor heads. See the module docs.
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     manifolds: Vec<ManifoldDecl>,
@@ -48,6 +58,8 @@ impl Registry {
         Registry::default()
     }
 
+    /// Declares a new manifold. Errors if `name` is already taken by any
+    /// manifold, bundle, or head.
     pub fn declare_manifold(&mut self, name: &str, dim: u32) -> Result<ManifoldId, CoreError> {
         self.check_free_name(name)?;
         let id = ManifoldId(self.manifolds.len() as u32);
@@ -56,6 +68,7 @@ impl Registry {
         Ok(id)
     }
 
+    /// Declares a new bundle over `base`. Errors if `name` is taken.
     pub fn declare_bundle(
         &mut self,
         name: &str,
@@ -69,6 +82,10 @@ impl Registry {
         Ok(id)
     }
 
+    /// Declares a new tensor head, computing and memoizing its symmetry
+    /// group's BSGS (see [`crate::symmetry::Bsgs::from_generators`]).
+    /// Errors if `name` is taken or a generator's permutation length
+    /// doesn't match `slots.len()`.
     pub fn declare_head(
         &mut self,
         name: &str,
@@ -111,6 +128,7 @@ impl Registry {
         &self.heads[id.0 as usize]
     }
 
+    /// Resolves a declared manifold's name to its id.
     pub fn lookup_manifold(&self, name: &str) -> Result<ManifoldId, CoreError> {
         match self.names.get(name) {
             Some(NameEntry::Manifold(id)) => Ok(*id),
@@ -118,6 +136,7 @@ impl Registry {
         }
     }
 
+    /// Resolves a declared bundle's name to its id.
     pub fn lookup_bundle(&self, name: &str) -> Result<BundleId, CoreError> {
         match self.names.get(name) {
             Some(NameEntry::Bundle(id)) => Ok(*id),
@@ -125,6 +144,7 @@ impl Registry {
         }
     }
 
+    /// Resolves a declared tensor head's name to its id.
     pub fn lookup_head(&self, name: &str) -> Result<HeadId, CoreError> {
         match self.names.get(name) {
             Some(NameEntry::Head(id)) => Ok(*id),

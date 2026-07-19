@@ -23,6 +23,7 @@ pub struct SlotId {
     pub slot: u8,
 }
 
+/// One occurrence of a [`crate::head::TensorHead`] within a [`Monomial`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Factor {
     pub head: HeadId,
@@ -39,6 +40,8 @@ pub struct Matching {
 }
 
 impl Matching {
+    /// Builds a `Matching` from an arbitrary list of pairs, normalizing
+    /// orientation and order. Rejects a slot contracted with itself.
     pub fn try_new(pairs: impl IntoIterator<Item = (SlotId, SlotId)>) -> Result<Self, CoreError> {
         let mut normalized: Vec<(SlotId, SlotId)> = pairs
             .into_iter()
@@ -56,10 +59,13 @@ impl Matching {
         Ok(Matching { pairs: normalized })
     }
 
+    /// The contracted pairs, each oriented `(min, max)` by [`SlotId`]'s
+    /// `Ord` and the whole list sorted -- see the struct docs.
     pub fn pairs(&self) -> &[(SlotId, SlotId)] {
         &self.pairs
     }
 
+    /// Number of contracted pairs.
     pub fn len(&self) -> usize {
         self.pairs.len()
     }
@@ -69,6 +75,8 @@ impl Matching {
     }
 }
 
+/// The user-facing name of a *free* index. Dummy indices never get one --
+/// see the module docs.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct AbstractIndex(String);
 
@@ -171,10 +179,12 @@ impl Monomial {
         &self.factors
     }
 
+    /// The dummy-index contraction graph.
     pub fn contractions(&self) -> &Matching {
         &self.contractions
     }
 
+    /// The uncontracted slots and the labels the user gave them.
     pub fn free(&self) -> &[(SlotId, AbstractIndex)] {
         &self.free
     }

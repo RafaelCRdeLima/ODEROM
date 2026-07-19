@@ -49,6 +49,7 @@ pub struct TensorHead {
 }
 
 impl TensorHead {
+    /// Number of slots.
     pub fn arity(&self) -> usize {
         self.slots.len()
     }
