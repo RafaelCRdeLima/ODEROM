@@ -1,5 +1,13 @@
 # ODEROM — DESIGN-M5.md (Marco 5: IR/JIT, transporte paralelo, holonomia)
 
+**Status: implementado.** Ver [README.md](README.md#marco-5-status). D5.1
+e D5.2 confirmados como propostos (interpretador sobre IR em SSA com CSE,
+sem geração de código de máquina nativo; RK4 escrito à mão, sem
+dependência numérica nova). D5.3 (triângulo octante em S², tolerância
+`1e-3`) também seguido como proposto -- o teste de aceitação passou já na
+primeira execução completa, com os passos laterais derivados à mão
+batendo com os vértices esperados dentro da tolerância.
+
 Mesma regra dos marcos anteriores: proposta, não começo de implementação.
 
 ## 0. Isto é uma mudança de categoria maior que qualquer marco anterior

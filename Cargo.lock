@@ -372,6 +372,7 @@ version = "0.1.0"
 dependencies = [
  "oderom-core",
  "oderom-expr",
+ "oderom-jit",
  "oderom-types",
  "rustc-hash",
  "smallvec",

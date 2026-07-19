@@ -125,6 +125,59 @@ registered as a specific, hardcoded rule (`apply_bianchi(&mut egraph,
 multi-term identity" mechanism -- confirmed with the user rather than
 building the (considerably larger) alternative speculatively.
 
+## Marco 5 status
+
+Not originally part of the roadmap's implementation plan -- the user
+brought it up "só para contexto" after Marco 4, then explicitly asked to
+continue into it ("prossiga"). This marco is a category change from
+Marcos 1-4: every prior acceptance criterion was checked by *exact*
+structural/symbolic equality (Kretschmann literally equals `48M²/r⁶`
+after normalizing, Bianchi's cyclic sum literally extracts to zero).
+Marco 5's criterion -- "the holonomy of a geodesic triangle on S² equals
+its area, within tolerance" -- requires solving two ODEs (the geodesic
+equation and parallel transport) numerically and comparing floats.
+
+Two forks were proposed in DESIGN-M5.md and confirmed with the user
+before implementation:
+
+- **D5.1**: "JIT" means an interpreted SSA IR with common-subexpression
+  elimination, not literal native machine-code generation. A real JIT
+  would need a `cranelift`-class dependency, categorically heavier than
+  anything used so far; an SSA IR interpreted in a single forward pass
+  delivers the actual goal (compile a symbolic `Expr` once, evaluate it
+  thousands of times cheaply during RK4 integration) without one.
+  `oderom-jit`'s `compile()` lowers `Expr` to a `Program` (a flat
+  `Vec<Op>` in SSA form) via hash-consing during construction --
+  structurally-equal subexpressions collapse to the same instruction,
+  the same technique `oderom-egraph` uses for its hash-consed e-nodes,
+  simpler here since there's no union-find, just a cache.
+- **D5.2**: RK4 (4th-order Runge-Kutta), hand-written, no numerical
+  dependency -- same "build it, don't pull it in" reasoning as
+  Schreier-Sims and the scalar CAS in earlier marcos. The geodesic
+  equation `dv^i/dt = -Γ^i_jk v^j v^k` and parallel transport
+  `dw^i/dt = -Γ^i_jk v^j w^k` are integrated as *one* coupled system
+  (`integrate_geodesic_with_transport` in `oderom-components::holonomy`),
+  not geodesic-then-transport as two passes, since RK4's intermediate
+  stages need consistent state for both at times between the recorded
+  steps.
+
+The acceptance test (`oderom-components/tests/holonomy.rs`) uses the
+"octant" triangle on the unit sphere -- vertices at the standard basis
+points `(1,0,0)`, `(0,1,0)`, `(0,0,1)`, each side a quarter great circle
+-- in one stereographic chart projected from the south pole. By symmetry
+the triangle is exactly 1/8 of the sphere's area (`π/2`); by
+Gauss-Bonnet, since the unit sphere has Gaussian curvature `K=1`
+everywhere, the holonomy angle around any geodesic triangle equals its
+area, so `π/2` is also the expected holonomy exactly, not just a
+numerically-derived target. The three sides' initial positions and
+unit-speed velocities were derived by hand (differentiating the
+stereographic projection along each great circle at its starting
+vertex) and independently checked to have `|v|_g = 1` before writing any
+code -- the test also asserts each side's integrated endpoint lands near
+the expected next vertex, which would have caught a mistake in that
+derivation. It passed on the first run, at 20,000 RK4 steps per side,
+well within the `1e-3` tolerance proposed in DESIGN-M5.md (D5.3).
+
 ## Marco 1 status against the acceptance table
 
 **Canonicalization correctness** -- all pass, including the property test:

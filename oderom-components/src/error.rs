@@ -16,4 +16,7 @@ pub enum ComponentError {
 
     #[error(transparent)]
     Core(#[from] oderom_core::CoreError),
+
+    #[error(transparent)]
+    Jit(#[from] oderom_jit::JitError),
 }

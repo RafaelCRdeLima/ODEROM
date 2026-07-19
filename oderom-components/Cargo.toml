@@ -9,6 +9,7 @@ description = "ODEROM Marco 2 -- charts, component tensors, Christoffel/Riemann/
 oderom-core = { path = "../oderom-core" }
 oderom-types = { path = "../oderom-types" }
 oderom-expr = { path = "../oderom-expr" }
+oderom-jit = { path = "../oderom-jit" }
 thiserror = "1"
 smallvec = "1"
 rustc-hash = "1"
