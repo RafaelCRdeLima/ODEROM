@@ -438,9 +438,12 @@ pub fn format_monomial(m: &Monomial, registry: &Registry) -> String {
     }
 
     let used: std::collections::HashSet<String> = labels.values().cloned().collect();
-    let mut alphabet = ('a'..='z').map(|c| c.to_string());
+    // 'a'..'z', then 'a1', 'b1', .. once single letters run out -- no
+    // fixed cap on how many dummy pairs a monomial may have.
+    let mut candidates =
+        (0u32..).flat_map(|round| ('a'..='z').map(move |c| if round == 0 { c.to_string() } else { format!("{c}{round}") }));
     let mut fresh = move || loop {
-        let candidate = alphabet.next().expect("fewer than 26 dummy pairs per Marco 1 monomial");
+        let candidate = candidates.next().expect("infinite iterator");
         if !used.contains(&candidate) {
             return candidate;
         }

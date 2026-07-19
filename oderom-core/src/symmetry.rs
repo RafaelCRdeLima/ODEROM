@@ -3,10 +3,11 @@
 //!
 //! Reference: J. J. Cannon & D. F. Holt's exposition of Schreier-Sims, and
 //! Butler, "Fundamental Algorithms for Permutation Groups", LNCS 559
-//! (1991), sec. 4. The construction below is the textbook orbit/transversal
-//! + Schreier-generator recursion; it is not the randomized (Monte Carlo)
-//! variant, which is unnecessary at the group orders this project deals
-//! with (tensor symmetry groups of order at most a few hundred).
+//! (1991), sec. 4. The construction below is the textbook
+//! orbit/transversal and Schreier-generator recursion; it is not the
+//! randomized (Monte Carlo) variant, which is unnecessary at the group
+//! orders this project deals with (tensor symmetry groups of order at
+//! most a few hundred).
 //!
 //! # Sign bookkeeping
 //!
@@ -90,8 +91,8 @@ impl Bsgs {
                 let u_delta = transversal[&delta].clone();
                 for s in &movers {
                     let delta2 = s.perm.image(delta);
-                    if !transversal.contains_key(&delta2) {
-                        transversal.insert(delta2, u_delta.then(s));
+                    if let std::collections::hash_map::Entry::Vacant(e) = transversal.entry(delta2) {
+                        e.insert(u_delta.then(s));
                         queue.push(delta2);
                     }
                 }

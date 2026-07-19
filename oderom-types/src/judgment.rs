@@ -78,7 +78,7 @@ pub fn typecheck_monomial(
         m.free().iter().map(|(slot, label)| (label.clone(), slot_sig(m, registry, *slot))).collect();
 
     Ok(ExprType {
-        manifold: manifold.expect("checked non-empty factors above"),
+        manifold: manifold.ok_or(TypeError::EmptyMonomial)?,
         free_signature,
         domain: Domain::Everywhere,
     })
