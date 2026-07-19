@@ -51,6 +51,15 @@ impl Scalar {
     pub fn is_zero(&self) -> bool {
         self.num == 0
     }
+
+    /// `1/self`, or `None` for zero (which has no reciprocal).
+    pub fn recip(self) -> Option<Scalar> {
+        if self.num == 0 {
+            None
+        } else {
+            Some(Scalar::reduce(self.den, self.num))
+        }
+    }
 }
 
 fn gcd(a: u64, b: u64) -> u64 {
@@ -129,6 +138,13 @@ mod tests {
         assert_eq!(Scalar::new(1, 2) * Scalar::new(2, 3), Scalar::new(1, 3));
         assert_eq!(-Scalar::new(1, 2), Scalar::new(-1, 2));
         assert_eq!(Scalar::new(1, 2) - Scalar::new(1, 2), Scalar::ZERO);
+    }
+
+    #[test]
+    fn recip() {
+        assert_eq!(Scalar::new(2, 3).recip(), Some(Scalar::new(3, 2)));
+        assert_eq!(Scalar::new(-2, 3).recip(), Some(Scalar::new(-3, 2)));
+        assert_eq!(Scalar::ZERO.recip(), None);
     }
 
     #[test]

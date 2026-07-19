@@ -5,6 +5,8 @@ members = [
     "oderom-types",
     "oderom-canon",
     "oderom-cli",
+    "oderom-expr",
+    "oderom-components",
 ]
 
 [workspace.package]
