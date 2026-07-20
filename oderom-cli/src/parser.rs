@@ -4,10 +4,14 @@
 //! handful of `parse_*` functions is clearer than pulling in a library.
 
 use crate::error::CliError;
+use crate::index_resolve::parse_component_line;
+use crate::model::Model;
+use oderom_components::{Chart, ComponentTensor, Grid};
 use oderom_core::{
     AbstractIndex, Factor, HeadId, Matching, Monomial, Perm, Registry, Scalar, SignedPerm, SlotId,
     SlotSig, Variance,
 };
+use oderom_expr::normalize;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -16,14 +20,19 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Tok {
+pub(crate) enum Tok {
     Ident(String),
     Int(u64),
+    /// A backslash-prefixed identifier (`\frac`, `\theta`, `\sin`, ...) --
+    /// the LaTeX-flavored front-end's alternate spelling for things the
+    /// ASCII grammar writes as bare identifiers or symbols (see
+    /// `expr_parser`). The name excludes the backslash.
+    Command(String),
     Sym(char),
     Eof,
 }
 
-struct Lexer<'a> {
+pub(crate) struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
 
@@ -32,7 +41,7 @@ impl<'a> Lexer<'a> {
         Lexer { chars: src.chars().peekable() }
     }
 
-    fn next_tok(&mut self) -> Result<Tok, CliError> {
+    pub(crate) fn next_tok(&mut self) -> Result<Tok, CliError> {
         loop {
             match self.chars.peek() {
                 None => return Ok(Tok::Eof),
@@ -64,10 +73,15 @@ impl<'a> Lexer<'a> {
                 }
                 n.parse().map(Tok::Int).map_err(|_| CliError::Parse(format!("bad integer `{n}`")))
             }
-            Some(c) if c.is_alphabetic() || c == '_' => {
+            // `_` is deliberately not an identifier character: it is the
+            // LaTeX-flavored front-end's subscript operator (`g_{tt}`),
+            // its own `Sym('_')` token, same as `^` for powers -- an
+            // identifier ending right before a subscript (`g_{tt}`) must
+            // lex as two tokens, not one `Ident("g_")`.
+            Some(c) if c.is_alphabetic() => {
                 let mut s = String::new();
                 while let Some(&d) = self.chars.peek() {
-                    if d.is_alphanumeric() || d == '_' {
+                    if d.is_alphanumeric() {
                         s.push(d);
                         self.chars.next();
                     } else {
@@ -75,6 +89,22 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Ok(Tok::Ident(s))
+            }
+            Some('\\') => {
+                self.chars.next();
+                let mut s = String::new();
+                while let Some(&d) = self.chars.peek() {
+                    if d.is_alphabetic() {
+                        s.push(d);
+                        self.chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                if s.is_empty() {
+                    return Err(CliError::Parse("`\\` must be followed by a command name".to_string()));
+                }
+                Ok(Tok::Command(s))
             }
             Some(c) => {
                 self.chars.next();
@@ -85,13 +115,13 @@ impl<'a> Lexer<'a> {
 }
 
 /// Turns a source string into a token stream with one token of lookahead.
-struct TokStream {
+pub(crate) struct TokStream {
     toks: Vec<Tok>,
     pos: usize,
 }
 
 impl TokStream {
-    fn new(src: &str) -> Result<Self, CliError> {
+    pub(crate) fn new(src: &str) -> Result<Self, CliError> {
         let mut lexer = Lexer::new(src);
         let mut toks = Vec::new();
         loop {
@@ -105,11 +135,11 @@ impl TokStream {
         Ok(TokStream { toks, pos: 0 })
     }
 
-    fn peek(&self) -> &Tok {
+    pub(crate) fn peek(&self) -> &Tok {
         &self.toks[self.pos]
     }
 
-    fn advance(&mut self) -> Tok {
+    pub(crate) fn advance(&mut self) -> Tok {
         let t = self.toks[self.pos].clone();
         if self.pos + 1 < self.toks.len() {
             self.pos += 1;
@@ -117,31 +147,39 @@ impl TokStream {
         t
     }
 
-    fn expect_sym(&mut self, c: char) -> Result<(), CliError> {
+    pub(crate) fn expect_sym(&mut self, c: char) -> Result<(), CliError> {
         match self.advance() {
             Tok::Sym(s) if s == c => Ok(()),
             other => Err(CliError::Parse(format!("expected `{c}`, found {other:?}"))),
         }
     }
 
-    fn expect_ident(&mut self, kw: &str) -> Result<(), CliError> {
+    pub(crate) fn expect_ident(&mut self, kw: &str) -> Result<(), CliError> {
         match self.advance() {
             Tok::Ident(s) if s == kw => Ok(()),
             other => Err(CliError::Parse(format!("expected `{kw}`, found {other:?}"))),
         }
     }
 
-    fn ident(&mut self) -> Result<String, CliError> {
+    pub(crate) fn ident(&mut self) -> Result<String, CliError> {
         match self.advance() {
             Tok::Ident(s) => Ok(s),
             other => Err(CliError::Parse(format!("expected an identifier, found {other:?}"))),
         }
     }
 
-    fn int(&mut self) -> Result<u64, CliError> {
+    pub(crate) fn int(&mut self) -> Result<u64, CliError> {
         match self.advance() {
             Tok::Int(n) => Ok(n),
             other => Err(CliError::Parse(format!("expected a number, found {other:?}"))),
+        }
+    }
+
+    /// Consumes a specific `\name` command token.
+    pub(crate) fn expect_command(&mut self, name: &str) -> Result<(), CliError> {
+        match self.advance() {
+            Tok::Command(s) if s == name => Ok(()),
+            other => Err(CliError::Parse(format!("expected `\\{name}`, found {other:?}"))),
         }
     }
 }
@@ -150,7 +188,12 @@ impl TokStream {
 // prelude.od: `manifold`, `bundle`, `head` declarations
 // ---------------------------------------------------------------------
 
-/// Parses a `prelude.od` source into a populated [`Registry`].
+/// Parses a `.od` source into a populated [`Model`] -- one language for
+/// everything (DESIGN-UI.md 6.1): Marco 1's abstract declarations
+/// (`manifold`/`bundle`/`head`) and the UI CLI's concrete ones
+/// (`chart`/`metric`/`connection`) share the same statement loop, the
+/// same lexer, and (for `metric`/`connection` component values) the same
+/// `SCALAR_EXPR` grammar with its ASCII/LaTeX token synonyms.
 ///
 /// Grammar (statements are recognized by their leading keyword; no
 /// terminator is needed since every construct's own grammar determines
@@ -163,10 +206,22 @@ impl TokStream {
 /// SLOT      := BUNDLE ['*']            (bare = contravariant, * = covariant)
 /// GEN       := 'antisymmetric' | 'symmetric' | CYCLE+ ('+' | '-')
 /// CYCLE     := '(' INT+ ')'
+///
+/// chart NAME on MANIFOLD coords (IDENT (',' IDENT)*)
+/// metric NAME on CHART bundle BUNDLE '{' LINE (',' LINE)* '}'
+/// connection NAME on CHART '{' LINE (',' LINE)* '}'
+/// LINE := '[' IDX (',' IDX)* ']' '=' SCALAR_EXPR
+///       | NAME '_' '{' ... '}' '=' SCALAR_EXPR    (NAME echoes the decl's own name)
+/// IDX  := coordinate name of the referenced CHART, or a literal integer
 /// ```
-pub fn parse_prelude(src: &str) -> Result<Registry, CliError> {
+///
+/// `metric` always declares its head as symmetric rank 2 (a metric *is*
+/// that, not user data); `connection` has no symmetry group at all
+/// (Christoffel symbols aren't a tensor, same as `curvature::christoffel`
+/// already assumes).
+pub fn parse_model(src: &str) -> Result<Model, CliError> {
     let mut toks = TokStream::new(src)?;
-    let mut reg = Registry::new();
+    let mut model = Model::new();
 
     loop {
         match toks.peek().clone() {
@@ -176,27 +231,128 @@ pub fn parse_prelude(src: &str) -> Result<Registry, CliError> {
                 let name = toks.ident()?;
                 toks.expect_ident("dim")?;
                 let dim = toks.int()? as u32;
-                reg.declare_manifold(&name, dim)?;
+                model.registry.declare_manifold(&name, dim)?;
             }
             Tok::Ident(kw) if kw == "bundle" => {
                 toks.advance();
                 let name = toks.ident()?;
                 toks.expect_ident("on")?;
                 let manifold_name = toks.ident()?;
-                let manifold = reg.lookup_manifold(&manifold_name)?;
+                let manifold = model.registry.lookup_manifold(&manifold_name)?;
                 toks.expect_ident("dim")?;
                 let dim = toks.int()? as u32;
-                reg.declare_bundle(&name, manifold, dim)?;
+                model.registry.declare_bundle(&name, manifold, dim)?;
             }
             Tok::Ident(kw) if kw == "head" => {
                 toks.advance();
-                parse_head_decl(&mut toks, &mut reg)?;
+                parse_head_decl(&mut toks, &mut model.registry)?;
+            }
+            Tok::Ident(kw) if kw == "chart" => {
+                toks.advance();
+                parse_chart_decl(&mut toks, &mut model)?;
+            }
+            Tok::Ident(kw) if kw == "metric" => {
+                toks.advance();
+                parse_metric_decl(&mut toks, &mut model)?;
+            }
+            Tok::Ident(kw) if kw == "connection" => {
+                toks.advance();
+                parse_connection_decl(&mut toks, &mut model)?;
             }
             other => return Err(CliError::Parse(format!("expected a declaration, found {other:?}"))),
         }
     }
 
-    Ok(reg)
+    Ok(model)
+}
+
+fn parse_chart_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
+    let name = toks.ident()?;
+    toks.expect_ident("on")?;
+    let manifold_name = toks.ident()?;
+    let manifold = model.registry.lookup_manifold(&manifold_name)?;
+    toks.expect_ident("coords")?;
+    toks.expect_sym('(')?;
+    let mut coords = Vec::new();
+    loop {
+        coords.push(toks.ident()?);
+        if *toks.peek() == Tok::Sym(',') {
+            toks.advance();
+        } else {
+            break;
+        }
+    }
+    toks.expect_sym(')')?;
+
+    let dim = model.registry.manifold(manifold).dim as usize;
+    if coords.len() != dim {
+        return Err(CliError::Parse(format!(
+            "chart `{name}` has {} coordinates, but manifold `{manifold_name}` has dimension {dim}",
+            coords.len()
+        )));
+    }
+    if model.charts.contains_key(&name) {
+        return Err(CliError::Parse(format!("chart `{name}` is already declared")));
+    }
+    model.charts.insert(name, Chart::new(coords));
+    Ok(())
+}
+
+fn lookup_chart<'a>(model: &'a Model, name: &str) -> Result<&'a Chart, CliError> {
+    model.charts.get(name).ok_or_else(|| CliError::Parse(format!("unknown chart `{name}`")))
+}
+
+fn parse_metric_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
+    let name = toks.ident()?;
+    toks.expect_ident("on")?;
+    let chart_name = toks.ident()?;
+    let chart = lookup_chart(model, &chart_name)?.clone();
+    toks.expect_ident("bundle")?;
+    let bundle_name = toks.ident()?;
+    let bundle = model.registry.lookup_bundle(&bundle_name)?;
+    let dim = model.registry.bundle(bundle).dim;
+    let co = SlotSig { bundle, variance: Variance::Co, dim };
+    let slots: SmallVec<[SlotSig; 4]> = smallvec::smallvec![co, co];
+    let head = model.registry.declare_head(&name, slots, vec![SignedPerm::new(Perm::transposition(2, 0, 1), 1)])?;
+
+    let mut tensor = ComponentTensor::new(head);
+    toks.expect_sym('{')?;
+    loop {
+        let (indices, expr) = parse_component_line(toks, &chart, 2, &name)?;
+        tensor.set(&model.registry, &indices, normalize(&expr))?;
+        if *toks.peek() == Tok::Sym(',') {
+            toks.advance();
+        } else {
+            break;
+        }
+    }
+    toks.expect_sym('}')?;
+
+    model.metrics.insert(name, (chart_name, head, tensor));
+    Ok(())
+}
+
+fn parse_connection_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
+    let name = toks.ident()?;
+    toks.expect_ident("on")?;
+    let chart_name = toks.ident()?;
+    let chart = lookup_chart(model, &chart_name)?.clone();
+
+    let mut gamma = Grid::new(chart.dim(), 3);
+    toks.expect_sym('{')?;
+    loop {
+        let (indices, expr) = parse_component_line(toks, &chart, 3, &name)?;
+        gamma.set(&indices, normalize(&expr));
+        if *toks.peek() == Tok::Sym(',') {
+            toks.advance();
+        } else {
+            break;
+        }
+    }
+    toks.expect_sym('}')?;
+
+    model.connections.insert(name, (chart_name, gamma));
+    Ok(())
 }
 
 fn parse_head_decl(toks: &mut TokStream, reg: &mut Registry) -> Result<(), CliError> {
@@ -493,7 +649,7 @@ head W : TM*
 
     #[test]
     fn parses_prelude_declarations() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         assert_eq!(reg.manifold(reg.lookup_manifold("M").unwrap()).dim, 4);
         let r = reg.lookup_head("R").unwrap();
         assert_eq!(reg.head(r).arity(), 4);
@@ -507,7 +663,7 @@ head W : TM*
 
     #[test]
     fn parses_and_resolves_a_monomial() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         let m = parse_monomial("R[a,b,c,d] R[c,d,a,b]", &reg).unwrap();
         assert_eq!(m.factors().len(), 2);
         assert!(m.free().is_empty());
@@ -516,28 +672,28 @@ head W : TM*
 
     #[test]
     fn parses_rational_coefficient_with_sign() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         let m = parse_monomial("-3/4 g[a,b]", &reg).unwrap();
         assert_eq!(m.coeff(), Scalar::new(-3, 4));
     }
 
     #[test]
     fn index_appearing_three_times_is_a_parse_error() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         let err = parse_monomial("R[a,a,a,b]", &reg).unwrap_err();
         assert!(matches!(err, CliError::Parse(_)));
     }
 
     #[test]
     fn wrong_arity_is_a_parse_error() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         let err = parse_monomial("g[a,b,c]", &reg).unwrap_err();
         assert!(matches!(err, CliError::Parse(_)));
     }
 
     #[test]
     fn format_round_trips_free_indices() {
-        let reg = parse_prelude(PRELUDE).unwrap();
+        let reg = parse_model(PRELUDE).unwrap().registry;
         let m = parse_monomial("R[a,b,c,d]", &reg).unwrap();
         assert_eq!(format_monomial(&m, &reg), "R[a,b,c,d]");
     }

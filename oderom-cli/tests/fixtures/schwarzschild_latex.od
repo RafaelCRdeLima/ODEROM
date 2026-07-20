@@ -1,0 +1,12 @@
+# Same Schwarzschild metric as schwarzschild_ascii.od, LaTeX-flavored
+# spelling of the same SCALAR_EXPR grammar -- must produce identical
+# results (DESIGN-UI.md 6.1: one grammar, two token spellings).
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  g_{tt} = -\left(1 - \frac{2M}{r}\right),
+  g_{rr} = \frac{1}{1 - \frac{2M}{r}},
+  g_{\theta\theta} = r^2,
+  g_{\phi\phi} = r^2 \sin^2(\theta)
+}

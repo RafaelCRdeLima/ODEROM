@@ -1,4 +1,8 @@
+mod commands;
 mod error;
+mod expr_parser;
+mod index_resolve;
+mod model;
 mod parser;
 
 use error::CliError;
@@ -14,10 +18,18 @@ fn main() {
 fn run() -> Result<(), CliError> {
     let mut args = std::env::args().skip(1);
     let subcommand = args.next().ok_or(CliError::Usage)?;
-    if subcommand != "canon" {
-        return Err(CliError::Usage);
+    match subcommand.as_str() {
+        "canon" => run_canon(args),
+        "christoffel" => commands::christoffel_cmd(commands::parse_args(args)?),
+        "riemann" => commands::riemann_cmd(commands::parse_args(args)?),
+        "ricci" => commands::ricci_cmd(commands::parse_args(args)?),
+        "scalar" => commands::scalar_cmd(commands::parse_args(args)?),
+        "kretschmann" => commands::kretschmann_cmd(commands::parse_args(args)?),
+        _ => Err(CliError::Usage),
     }
+}
 
+fn run_canon(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
     let mut prelude_path = "prelude.od".to_string();
     let mut expr: Option<String> = None;
     while let Some(a) = args.next() {
@@ -31,7 +43,7 @@ fn run() -> Result<(), CliError> {
 
     let prelude_src = std::fs::read_to_string(&prelude_path)
         .map_err(|source| CliError::Io { path: prelude_path.clone(), source })?;
-    let registry = parser::parse_prelude(&prelude_src)?;
+    let model = parser::parse_model(&prelude_src)?;
 
     // `canon` computes the canonical form of the contraction graph itself
     // (Marco 1.3); it does not run the separate geometric type judgment
@@ -40,16 +52,16 @@ fn run() -> Result<(), CliError> {
     // very examples Marco 1's acceptance table exercises, since `R` and
     // `g` are declared fully covariant by default (see `prelude.od`) and
     // Marco 1 has no index raising/lowering to reconcile that with.
-    let monomial = parser::parse_monomial(&expr, &registry)?;
+    let monomial = parser::parse_monomial(&expr, &model.registry)?;
 
     let start = Instant::now();
-    let result = oderom_canon::canonicalize(&monomial, &registry)?;
+    let result = oderom_canon::canonicalize(&monomial, &model.registry)?;
     let elapsed = start.elapsed();
 
     match result {
         oderom_canon::CanonResult::Zero => println!("0"),
         oderom_canon::CanonResult::Value(c) => {
-            let text = parser::format_monomial(&c.monomial, &registry);
+            let text = parser::format_monomial(&c.monomial, &model.registry);
             let swaps = transposition_count(&c.perm);
             println!(
                 "{text}        (sign {}{}, {swaps} slot swap{}, {:.3} ms)",

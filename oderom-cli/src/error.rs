@@ -15,6 +15,20 @@ pub enum CliError {
     #[error(transparent)]
     Canon(#[from] oderom_canon::CanonError),
 
-    #[error("usage: oderom canon [--prelude PATH] \"<expression>\"")]
+    #[error(transparent)]
+    Component(#[from] oderom_components::ComponentError),
+
+    #[error("no metric or connection found in the file")]
+    NoMetricOrConnection,
+
+    #[error("the file declares more than one {kind} ({names}); pick one with --{kind}")]
+    AmbiguousChoice { kind: &'static str, names: String },
+
+    #[error("`{name}` needs a metric to invert (only a connection was declared)")]
+    NeedsMetric { name: String },
+
+    #[error(
+        "usage: oderom canon [--prelude PATH] \"<expression>\"\n   or: oderom {{christoffel|riemann|ricci|scalar|kretschmann}} FILE [--metric NAME | --connection NAME] [--target unicode|latex|json] [--max-lines N]"
+    )]
     Usage,
 }

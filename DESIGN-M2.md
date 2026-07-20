@@ -109,6 +109,18 @@ Inversão simbólica geral de matriz `n x n` (cofatores, `n=4`) é factível mas
 2. Implementar cofatores gerais já, aceitando expressões maiores e um simplificador mais exigente.
 Minha recomendação é (1) — é exatamente o "prefira a estrutura correta ao invés de anexar generalidade que o teste de aceitação não pede", mas quero seu aval porque é o tipo de escolha que weakens a generalidade do sistema se ficar esquecida.
 
+**Nota (2026-07-19, discussão da UI/CLI, DESIGN-UI.md §6.0):** registrando
+explicitamente o que a restrição diagonal exclui, para não ficar
+esquecido -- você pediu que isto fique documentado antes de qualquer
+outra coisa se apoiar em cima: coordenadas nulas (tipo
+Eddington-Finkelstein, `du dv` cruzado), Kerr (`g_{t phi}` não-nulo), e
+principalmente **teoria de perturbação** -- `g + h` é genericamente
+não-diagonal mesmo quando `g` de fundo é diagonal, já que `h` é um tensor
+simétrico qualquer, sem motivo para respeitar a estrutura diagonal do
+fundo. Nada disto está sendo implementado agora; cofatores gerais
+continuam sendo o próximo passo natural quando algum desses casos vier a
+ser pedido de verdade.
+
 **D-M2.2 — `Expr` fica em crate própria (`oderom-expr`) ou dentro de `oderom-components`?**
 Proponho crate própria porque `Expr` é reutilizável fora de tensores (é só um CAS escalar) e mantém `oderom-components` focada em geometria, não em álgebra simbólica. Confirma?
 

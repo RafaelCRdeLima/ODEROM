@@ -1,0 +1,9 @@
+# A bare connection with no metric at all -- exercises the alternate
+# entry point (DESIGN-UI.md 6.2/6.4): christoffel/riemann/ricci can work
+# from Gamma directly, but scalar/kretschmann need g^ab and must refuse.
+manifold M dim 2
+bundle TM on M dim 2
+chart flat2 on M coords (x, y)
+connection Gamma on flat2 {
+  [x,y,y] = x
+}

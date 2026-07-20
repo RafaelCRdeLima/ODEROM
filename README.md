@@ -214,14 +214,73 @@ then given three corrections by the user before implementation:
    The new renderer tests are golden strings, and are documented inline
    as testing the renderer's output format, not any mathematical claim.
 
-Not yet done: wiring any of this into the CLI (new subcommands, an
-extended `prelude.od` grammar for declaring a metric) -- that depended on
-an open question (DESIGN-UI.md's D-UI.3, the metric-file format) the
-user hadn't confirmed when approving Camada A, so it was left for a
-follow-up rather than guessed. A graphical UI is explicitly out of scope
-for now; the user's working hypothesis is a Jupyter kernel rather than a
-standalone GUI, which is the concrete reason the `Json` target exists
-already instead of being deferred.
+Wiring this into the CLI was left for a follow-up (below) rather than
+guessed, since it depended on an open question (DESIGN-UI.md's D-UI.3,
+the metric-file format) the user hadn't confirmed when approving Camada
+A. A graphical UI is explicitly out of scope for now; the user's working
+hypothesis is a Jupyter kernel rather than a standalone GUI, which is the
+concrete reason the `Json` target exists already instead of being
+deferred.
+
+## UI status (Camada A.2 -- CLI)
+
+D-UI.3 resolved: one language, not two formats -- `chart`/`metric`/
+`connection` are new declaration kinds in the same `.od` grammar
+`manifold`/`bundle`/`head` already used (`parser::parse_model`, which
+replaced `parse_prelude`), and the LaTeX-flavored front-end is not a
+parallel parser: it is alternate token spellings inside the *same*
+`SCALAR_EXPR` grammar (`/` or `\frac{}{}`, `sin(x)` or `\sin(x)`/
+`\sin^2(x)`, `\theta` sharing the exact `GREEK_LETTERS` table the
+renderer uses in the other direction) -- both always produce the same
+`oderom_expr::Expr`, checked directly
+(`expr_parser::tests::ascii_and_latex_lower_to_the_same_ast`) and
+end-to-end (`oderom-cli/tests/end_to_end.rs` runs the compiled binary
+against two fixture files encoding the same Schwarzschild metric, one
+ASCII, one LaTeX, and checks the rendered Kretschmann scalar matches
+exactly).
+
+Two design questions the user raised before implementation, both
+resolved and documented in DESIGN-UI.md before any code was written:
+
+- **Glued subscript indices (`g_{tt}`, 6.3).** Not resolved by a
+  per-chart mode (renaming a coordinate would have silently invalidated
+  unrelated, unambiguous lines elsewhere in the same file). Resolved
+  per-token instead, by backtracking search over the chart's declared
+  coordinate names -- exactly one full decomposition of the expected
+  length is accepted; zero is a clear error naming the chart's
+  coordinates; two or more lists every reading and points at the comma
+  form (`g_{t,r}`), which always works, in any chart, with no search at
+  all. Backtracking, not greedy/maximal-munch: a chart with both `r` and
+  `rho` still resolves `rhor` to `[rho, r]` even though matching `r`
+  first dead-ends one character short.
+- **Abstract vs. concrete indices in the same file (6.3b).** What does
+  `_{ab}`/`[a,b]` mean in a chart whose coordinates happen to be named
+  `a`/`b`? Resolved by grammatical context, never by the index's
+  spelling: inside a `metric`/`connection` block every index is a
+  concrete coordinate position resolved against that declaration's own
+  `chart`; inside a tensor-monomial expression (`canon`'s `R[a,b,c,d]`,
+  Marco 1) every index is an abstract contraction label, and no chart is
+  ever consulted. The two grammars never share a bracket, so the
+  question of what a shared spelling would mean never actually arises.
+
+Also registered (not implemented) while answering "does the components
+layer handle an arbitrary metric from a file": the Marco 2 diagonal-only
+restriction (D-M2.1, DESIGN-M2.md) excludes null coordinates,
+Kerr-like off-diagonal terms, and -- the one the user flagged as the
+real future concern -- perturbation theory, since `g + h` is generically
+non-diagonal even when the background `g` is diagonal.
+
+Five subcommands, DESIGN-UI.md 6.4: `christoffel`, `riemann`, `ricci`,
+`scalar`, `kretschmann`, each taking a `.od` FILE plus `--metric`/
+`--connection` (only needed if the file declares more than one; an
+explicit `--connection` always wins over an implicit metric),
+`--target unicode|latex|json`, and `--max-lines`. `riemann`/`ricci`
+register an internal, undeclared symmetry head (Riemann's order-8 group,
+or a plain symmetric pair for Ricci) purely to route through
+`classify_tensor`'s elision -- which components are independent is a
+mathematical fact of rank and symmetry, never something the user
+declares. `scalar`/`kretschmann` need `g^ab` and refuse cleanly
+(`NeedsMetric`) rather than compute a number from a bare `connection`.
 
 ## Marco 1 status against the acceptance table
 

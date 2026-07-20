@@ -28,6 +28,7 @@ mod substitute;
 pub use diff::diff;
 pub use normalize::normalize;
 pub use rationalize::rationalize;
+pub use render::GREEK_LETTERS;
 pub use substitute::substitute;
 
 use oderom_core::Scalar;

@@ -157,17 +157,22 @@ fn latex_mul(factors: &[Expr]) -> String {
     }
 }
 
-/// LaTeX macros for the Greek letters that show up constantly as
-/// coordinate/index names in differential geometry (`theta`, `phi`,
-/// ...); anything else passes through unchanged.
+/// The Greek letters that show up constantly as coordinate/index names
+/// in differential geometry (`theta`, `phi`, ...), lowercase. Shared with
+/// `oderom-cli`'s LaTeX-flavored parser (`\theta` -> `Var("theta")`) so
+/// the two directions -- render a name as a macro, read a macro back as
+/// a name -- can never drift apart by listing the letters twice.
+pub const GREEK_LETTERS: &[&str] = &[
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+    "lambda", "mu", "nu", "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon", "phi", "chi",
+    "psi", "omega",
+];
+
+/// LaTeX macros for the Greek letters (see [`GREEK_LETTERS`]); anything
+/// else passes through unchanged.
 fn latex_var(name: &str) -> String {
-    const GREEK: &[&str] = &[
-        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
-        "lambda", "mu", "nu", "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon", "phi",
-        "chi", "psi", "omega",
-    ];
     let lower = name.to_ascii_lowercase();
-    if GREEK.contains(&lower.as_str()) {
+    if GREEK_LETTERS.contains(&lower.as_str()) {
         let macro_name = if name.chars().next().is_some_and(char::is_uppercase) {
             let mut c = lower.chars();
             match c.next() {

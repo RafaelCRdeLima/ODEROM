@@ -1,0 +1,10 @@
+# Schwarzschild metric, ASCII flavor of the SCALAR_EXPR grammar.
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r),
+  [r,r] = 1/(1 - 2*M/r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}

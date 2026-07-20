@@ -361,7 +361,9 @@ name = "oderom-cli"
 version = "0.1.0"
 dependencies = [
  "oderom-canon",
+ "oderom-components",
  "oderom-core",
+ "oderom-expr",
  "smallvec",
  "thiserror",
 ]
