@@ -121,6 +121,15 @@ fundo. Nada disto está sendo implementado agora; cofatores gerais
 continuam sendo o próximo passo natural quando algum desses casos vier a
 ser pedido de verdade.
 
+**Nota (2026-07-19, diagnóstico de desempenho, DESIGN-RATIONAL-FORM.md):**
+todo fixture deste repositório (Schwarzschild, S², de Sitter 2D) usa um
+`f(r)` de **dois** termos. Essa classe de estouro combinatório em
+`normalize()` (ver DESIGN-RATIONAL-FORM.md) era invisível para a suíte
+inteira até um `f(r)` de três termos (Reissner-Nordström, `1-2M/r+Q²/r²`)
+expor. Registrando como princípio para testes de desempenho daqui pra
+frente: preferir métricas com três ou mais termos em `f(r)`, não repetir
+o padrão de dois termos que mascarou isso por tanto tempo.
+
 **D-M2.2 — `Expr` fica em crate própria (`oderom-expr`) ou dentro de `oderom-components`?**
 Proponho crate própria porque `Expr` é reutilizável fora de tensores (é só um CAS escalar) e mantém `oderom-components` focada em geometria, não em álgebra simbólica. Confirma?
 

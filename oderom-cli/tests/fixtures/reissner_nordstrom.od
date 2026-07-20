@@ -1,0 +1,15 @@
+# Reissner-Nordstrom: f(r) = 1 - 2M/r + Q^2/r^2, three terms (every other
+# fixture in this repo has a two-term f(r) -- see DESIGN-M2.md's
+# rational-normal-form note). `kretschmann` on this file does not
+# currently finish (measured in oderom-components/tests/diagnostic_rn.rs);
+# this fixture exists to test the guardrail (timeout/node-limit), not as
+# a passing acceptance fixture -- see end_to_end.rs.
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r + Q^2/r^2),
+  [r,r] = 1/(1 - 2*M/r + Q^2/r^2),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}

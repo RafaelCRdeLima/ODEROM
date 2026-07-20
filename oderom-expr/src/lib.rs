@@ -95,6 +95,21 @@ impl Expr {
     pub fn is_zero(&self) -> bool {
         matches!(self, Expr::Rational(s) if s.is_zero())
     }
+
+    /// Total number of nodes in the expression tree (every `Rational`,
+    /// `Var`, and operator counts as one, plus its children). A cheap,
+    /// purely structural size measure -- not a cost/complexity estimate,
+    /// just "how big is this tree right now" -- used to diagnose and
+    /// guard against expression blowup during symbolic computation (see
+    /// DESIGN-M2.md's rational-normal-form note).
+    pub fn node_count(&self) -> usize {
+        1 + match self {
+            Expr::Rational(_) | Expr::Var(_) => 0,
+            Expr::Add(terms) | Expr::Mul(terms) => terms.iter().map(Expr::node_count).sum(),
+            Expr::Pow(base, _) => base.node_count(),
+            Expr::Sin(inner) | Expr::Cos(inner) => inner.node_count(),
+        }
+    }
 }
 
 /// Rank used only to order *different variants* against each other;
@@ -174,6 +189,13 @@ impl std::ops::Div for Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_count_counts_every_node() {
+        // (x + 1)^2: Pow -> Add -> [Var, Rational] = 4 nodes.
+        let e = (Expr::var("x") + Expr::one()).pow(2);
+        assert_eq!(e.node_count(), 4);
+    }
 
     #[test]
     fn ord_makes_addition_order_irrelevant_to_sorted_form() {

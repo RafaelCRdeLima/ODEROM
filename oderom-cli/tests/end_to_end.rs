@@ -66,3 +66,30 @@ fn scalar_on_a_bare_connection_errors_instead_of_guessing() {
     assert!(!ok);
     assert!(stderr.contains("needs a metric"), "{stderr}");
 }
+
+/// The guardrail (not the fix -- kretschmann of Reissner-Nordstrom does
+/// not currently terminate, see diagnostic_rn.rs): with a short timeout
+/// the command must return promptly with a clear diagnostic instead of
+/// hanging. This is what makes it safe to run this fixture in CI at all.
+#[test]
+fn kretschmann_of_reissner_nordstrom_times_out_cleanly_instead_of_hanging() {
+    let start = std::time::Instant::now();
+    let (ok, _stdout, stderr) = run(&["kretschmann", "tests/fixtures/reissner_nordstrom.od", "--timeout", "3"]);
+    assert!(start.elapsed() < std::time::Duration::from_secs(10), "the command must not hang past its own timeout");
+    assert!(!ok);
+    assert!(stderr.contains("timed out after"), "{stderr}");
+}
+
+/// christoffel/riemann/ricci on Reissner-Nordstrom are the stages the
+/// user's own diagnosis found to be fast and correct (unlike
+/// kretschmann/scalar's contraction) -- regression coverage so a future
+/// change to the guardrail or the pipeline doesn't quietly slow these
+/// back down.
+#[test]
+fn christoffel_and_riemann_of_reissner_nordstrom_stay_fast() {
+    let start = std::time::Instant::now();
+    let (ok, stdout, stderr) = run(&["christoffel", "tests/fixtures/reissner_nordstrom.od", "--timeout", "5"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("Gamma["), "{stdout}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}

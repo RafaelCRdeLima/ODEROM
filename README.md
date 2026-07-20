@@ -38,6 +38,38 @@ cargo bench -p oderom-canon       # performance acceptance criteria
 cargo run -p oderom-cli -- canon "R[a,b,c,d] R[c,d,a,b]"
 ```
 
+## Sign conventions
+
+Not written down anywhere user-visible before now -- flagged during the
+Reissner-Nordström performance investigation. The formulas
+`oderom-components::curvature` actually computes (also in that module's
+own doc comment):
+
+```
+Gamma^a_bc = 1/2 g^ad (d_b g_dc + d_c g_db - d_d g_bc)
+R^a_bcd    = d_c Gamma^a_bd - d_d Gamma^a_bc + Gamma^a_ce Gamma^e_bd - Gamma^a_de Gamma^e_bc
+R_bd       = R^a_bad                              (Ricci tensor)
+R          = g^bd R_bd                            (Ricci scalar)
+```
+
+This is one fixed, non-configurable convention -- not a choice exposed
+anywhere. Riemann/Ricci sign conventions genuinely differ across GR
+references (independently of metric signature), so a sign mismatch
+against some other book or paper does not by itself mean either is
+wrong; check that reference's own convention before assuming a bug here.
+For a concrete anchor, `oderom christoffel`/`riemann` on
+`oderom-cli/tests/fixtures/schwarzschild_ascii.od` (coordinates
+`t, r, theta, phi`, indices `0,1,2,3`, signature `(-,+,+,+)`) gives:
+
+```
+R[0,1,0,1] = -2*M/r^3
+R[0,2,0,2] = M/r - 2*M^2/r^2
+R[0,3,0,3] = (M/r - 2*M^2/r^2) * sin(theta)^2
+R[1,2,1,2] = -M/(r*(1 - 2*M/r))
+R[1,3,1,3] = -M*sin(theta)^2/(r*(1 - 2*M/r))
+R[2,3,2,3] = 2*M*r*sin(theta)^2
+```
+
 ## Marco 2 status
 
 **Kretschmann of Schwarzschild = 48M^2/r^6** (`oderom-components/tests/schwarzschild.rs`)
