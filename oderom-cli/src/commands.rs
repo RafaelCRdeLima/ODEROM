@@ -35,6 +35,18 @@
 //! different, real failure mode (genuine tree blowup) that a pure
 //! timeout wouldn't name as precisely.
 //!
+//! `--max-denominator-degree` (default 30) is the guardrail the node
+//! count one provably can't be: `oderom_expr::denominator_degree`
+//! (`rationalize()` then the standard recursive polynomial-degree
+//! definition on the resulting denominator) grows exactly where the
+//! blowup starts (measured on real Reissner-Nordstrom terms: 0 at 16
+//! summed terms, 111 at 32) instead of staying flat like node count
+//! does. It is *not* a cheap check, though -- it costs about as much as
+//! `normalize()` itself, since it goes through the same machinery -- so
+//! `kretschmann` only evaluates it at the same cadence as progress
+//! reporting (`PROGRESS_STRIDE`), not every term; its value is a more
+//! precise diagnostic when it fires, not a smaller time budget.
+//!
 //! `kretschmann` specifically does not call `curvature::kretschmann` as
 //! one opaque call: it re-implements the same sum term-by-term here,
 //! `normalize`-ing and checking the node budget incrementally, so a
@@ -51,7 +63,7 @@ use oderom_components::curvature::{
 };
 use oderom_components::{classify_grid, classify_tensor, render_classes, Chart, ComponentTensor, Grid};
 use oderom_core::{HeadId, Perm, Registry, Render, SignedPerm, SlotSig, Target, Variance};
-use oderom_expr::{normalize, Expr};
+use oderom_expr::{denominator_degree, normalize, Expr};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -59,6 +71,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const DEFAULT_MAX_NODES: usize = 20_000;
+const DEFAULT_MAX_DENOMINATOR_DEGREE: i32 = 30;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Args {
@@ -68,6 +81,7 @@ pub struct Args {
     target: Target,
     max_lines: usize,
     max_nodes: usize,
+    max_denominator_degree: i32,
     timeout: Duration,
 }
 
@@ -78,6 +92,7 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
     let mut target = Target::Unicode;
     let mut max_lines = 20usize;
     let mut max_nodes = DEFAULT_MAX_NODES;
+    let mut max_denominator_degree = DEFAULT_MAX_DENOMINATOR_DEGREE;
     let mut timeout = DEFAULT_TIMEOUT;
     let mut args = args;
     while let Some(a) = args.next() {
@@ -98,6 +113,9 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
             "--max-nodes" => {
                 max_nodes = args.next().ok_or(CliError::Usage)?.parse().map_err(|_| CliError::Usage)?;
             }
+            "--max-denominator-degree" => {
+                max_denominator_degree = args.next().ok_or(CliError::Usage)?.parse().map_err(|_| CliError::Usage)?;
+            }
             "--timeout" => {
                 let secs: f64 = args.next().ok_or(CliError::Usage)?.parse().map_err(|_| CliError::Usage)?;
                 timeout = Duration::from_secs_f64(secs);
@@ -106,7 +124,16 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
             _ => return Err(CliError::Usage),
         }
     }
-    Ok(Args { file: file.ok_or(CliError::Usage)?, metric, connection, target, max_lines, max_nodes, timeout })
+    Ok(Args {
+        file: file.ok_or(CliError::Usage)?,
+        metric,
+        connection,
+        target,
+        max_lines,
+        max_nodes,
+        max_denominator_degree,
+        timeout,
+    })
 }
 
 fn load_model(args: &Args) -> Result<Model, CliError> {
@@ -467,7 +494,25 @@ pub fn kretschmann_cmd(args: Args) -> Result<(), CliError> {
                 });
             }
             if index % PROGRESS_STRIDE == 0 || index + 1 == total_terms {
-                progress.set(format!("summing Kretschmann terms ({}/{total_terms}, {nodes} nodes so far)", index + 1));
+                // denominator_degree costs about as much as normalize()
+                // itself (both go through the same rationalize/normalize
+                // machinery -- measured, not assumed: diagnostic_rn.rs),
+                // so it is not a cheap early check and is only worth
+                // running at the same cadence as progress reporting, not
+                // every term. Its value is a more precise diagnostic when
+                // it does fire, not a smaller time budget.
+                let degree = denominator_degree(&sum);
+                if degree > args.max_denominator_degree {
+                    return Err(CliError::DenominatorDegreeExceeded {
+                        stage: format!("kretschmann sum (term {}/{total_terms})", index + 1),
+                        degree,
+                        limit: args.max_denominator_degree,
+                    });
+                }
+                progress.set(format!(
+                    "summing Kretschmann terms ({}/{total_terms}, {nodes} nodes, denominator degree {degree})",
+                    index + 1
+                ));
             }
         }
         Ok(sum.render(args.target))

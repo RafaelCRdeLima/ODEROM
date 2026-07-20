@@ -85,6 +85,38 @@ fn pow_by_repeated_mul(base: Expr, n: i32) -> Expr {
     acc
 }
 
+/// The polynomial degree of `e`'s denominator once `e` is put over one
+/// fraction by [`rationalize`].
+///
+/// Used as a second guardrail (`oderom-cli`'s `--max-denominator-degree`)
+/// alongside the wall-clock timeout, precisely because plain node count
+/// provably does not catch the Reissner-Nordstrom blowup (see
+/// `oderom-components/tests/diagnostic_rn.rs`): the failing computation's
+/// raw *tree* never gets large, but `rationalize`'s own `den = den * td`
+/// never cancels a shared factor against a matching negative power (no
+/// GCD step exists yet -- that is what DESIGN-RATIONAL-FORM.md proposes
+/// adding), so the denominator's *degree* grows every time another
+/// unreduced term is folded in, well before the tree itself looks
+/// alarming by size alone.
+pub fn denominator_degree(e: &Expr) -> i32 {
+    degree(&rationalize(e).1)
+}
+
+/// The standard recursive definition of polynomial degree (a sum's
+/// degree is the max of its terms', a product's is the sum of its
+/// factors', `base^n` is `|n|` times `base`'s), extended to treat
+/// `sin`/`cos` as degree-1 atoms like any variable -- consistent with
+/// [`crate::normalize`] never expanding or relating them by identity.
+fn degree(e: &Expr) -> i32 {
+    match e {
+        Expr::Rational(_) => 0,
+        Expr::Var(_) | Expr::Sin(_) | Expr::Cos(_) => 1,
+        Expr::Add(terms) => terms.iter().map(degree).max().unwrap_or(0),
+        Expr::Mul(factors) => factors.iter().map(degree).sum(),
+        Expr::Pow(base, n) => n.unsigned_abs() as i32 * degree(base),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +154,35 @@ mod tests {
         let (num, den) = rationalize(&e);
         assert!(!has_negative_exponent(&num), "{num:?}");
         assert!(!has_negative_exponent(&den), "{den:?}");
+    }
+
+    #[test]
+    fn denominator_degree_of_a_simple_power() {
+        let r = Expr::var("r");
+        assert_eq!(denominator_degree(&Expr::Pow(Box::new(r.clone()), -1)), 1);
+        assert_eq!(denominator_degree(&Expr::Pow(Box::new(r), -4)), 4);
+    }
+
+    #[test]
+    fn denominator_degree_grows_when_denominators_do_not_unify() {
+        // Distinct-but-related sums (not the literal same Add node)
+        // don't hit normalize's single-common-denominator fast path --
+        // this is the actual shape that blows up
+        // (combine_over_common_denominators's own comment: "two or more
+        // distinct denominator sums... left uncombined"), unlike adding
+        // several copies of the *same* fraction, which that fast path
+        // already handles today.
+        let r = Expr::var("r");
+        let f = |k: i64| Expr::one() - Expr::int(k) * Expr::var("M") / r.clone();
+        let one_term = Expr::Pow(Box::new(f(2)), -1);
+        let four_terms = Expr::Pow(Box::new(f(2)), -1)
+            + Expr::Pow(Box::new(f(3)), -1)
+            + Expr::Pow(Box::new(f(4)), -1)
+            + Expr::Pow(Box::new(f(5)), -1);
+
+        let d1 = denominator_degree(&one_term);
+        let d4 = denominator_degree(&four_terms);
+        assert!(d4 > d1, "expected degree to grow when denominators don't unify: d1={d1}, d4={d4}");
     }
 
     fn has_negative_exponent(e: &Expr) -> bool {

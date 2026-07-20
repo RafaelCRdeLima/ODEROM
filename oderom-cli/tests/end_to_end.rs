@@ -80,6 +80,29 @@ fn kretschmann_of_reissner_nordstrom_times_out_cleanly_instead_of_hanging() {
     assert!(stderr.contains("timed out after"), "{stderr}");
 }
 
+/// With enough time budget for the denominator-degree check to actually
+/// fire (it costs about as much as normalize() itself, see commands.rs),
+/// the abort names the real cause precisely instead of a generic
+/// timeout. `#[ignore]`d: ~15s in --release, ~60s in the default debug
+/// profile this suite normally runs under -- too slow to run by default
+/// alongside the 3s generic-timeout test above, which already covers
+/// "does not hang" on every run. Run explicitly with
+/// `cargo test -p oderom-cli --test end_to_end -- --ignored`.
+#[test]
+#[ignore]
+fn kretschmann_of_reissner_nordstrom_names_denominator_degree_when_given_time_to_check() {
+    let (ok, _stdout, stderr) = run(&[
+        "kretschmann",
+        "tests/fixtures/reissner_nordstrom.od",
+        "--timeout",
+        "60",
+        "--max-denominator-degree",
+        "30",
+    ]);
+    assert!(!ok);
+    assert!(stderr.contains("denominator degree exceeded"), "{stderr}");
+}
+
 /// christoffel/riemann/ricci on Reissner-Nordstrom are the stages the
 /// user's own diagnosis found to be fast and correct (unlike
 /// kretschmann/scalar's contraction) -- regression coverage so a future

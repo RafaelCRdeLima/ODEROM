@@ -18,7 +18,7 @@ use oderom_components::curvature::{
 };
 use oderom_components::{Chart, ComponentError, ComponentTensor, Grid};
 use oderom_core::{HeadId, Perm, Registry, SignedPerm, SlotSig, Variance};
-use oderom_expr::{normalize, Expr};
+use oderom_expr::{denominator_degree, normalize, Expr};
 use smallvec::SmallVec;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -220,11 +220,25 @@ fn measure_reissner_nordstrom_kretschmann_pipeline() {
     };
     let mut n = 2usize;
     while n <= 256 {
+        // denominator_degree first, on the *raw* un-normalized partial --
+        // this is exactly what the CLI's --max-denominator-degree
+        // guardrail checks, so the real question is whether it crosses a
+        // sane threshold well before normalize() itself stops finishing.
+        let degree_partial = Expr::Add(all_terms[..n].to_vec());
+        match time_boxed(Duration::from_secs(20), move || denominator_degree(&degree_partial)) {
+            Some((degree, elapsed)) => {
+                println!("denominator_degree({n:>3} terms) {elapsed:>8.3?}   degree={degree}");
+            }
+            None => {
+                println!("denominator_degree({n:>3} terms) DID NOT FINISH within 20s");
+            }
+        }
+
         let partial = Expr::Add(all_terms[..n].to_vec());
         match time_boxed(Duration::from_secs(20), move || normalize(&partial)) {
             Some((result, elapsed)) => {
                 println!(
-                    "normalize({n:>3} terms) {elapsed:>8.3?}   nodes_before={:>6} nodes_after={:>6}",
+                    "normalize({n:>3} terms)          {elapsed:>8.3?}   nodes_before={:>6} nodes_after={:>6}",
                     Expr::Add(all_terms[..n].to_vec()).node_count(),
                     result.node_count()
                 );

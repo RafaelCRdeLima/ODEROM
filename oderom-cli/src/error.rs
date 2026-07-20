@@ -30,11 +30,14 @@ pub enum CliError {
     #[error("expression exceeded {limit} nodes ({nodes}) at stage `{stage}`")]
     NodeLimitExceeded { stage: String, nodes: usize, limit: usize },
 
+    #[error("denominator degree exceeded {limit} ({degree}) at stage `{stage}`")]
+    DenominatorDegreeExceeded { stage: String, degree: i32, limit: i32 },
+
     #[error("timed out after {timeout:?} -- last stage in progress: `{stage}`")]
     Timeout { stage: String, timeout: std::time::Duration },
 
     #[error(
-        "usage: oderom canon [--prelude PATH] \"<expression>\"\n   or: oderom {{christoffel|riemann|ricci|scalar|kretschmann}} FILE [--metric NAME | --connection NAME] [--target unicode|latex|json] [--max-lines N] [--max-nodes N] [--timeout SECONDS]"
+        "usage: oderom canon [--prelude PATH] \"<expression>\"\n   or: oderom {{christoffel|riemann|ricci|scalar|kretschmann}} FILE [--metric NAME | --connection NAME] [--target unicode|latex|json] [--max-lines N] [--max-nodes N] [--max-denominator-degree N] [--timeout SECONDS]"
     )]
     Usage,
 }
