@@ -49,7 +49,18 @@ fn kerr_metric() -> (Registry, Chart, ComponentTensor) {
     .unwrap();
     g.set(&registry, &[1, 1], normalize(&(sigma.clone() * Expr::Pow(Box::new(delta), -1)))).unwrap();
     g.set(&registry, &[2, 2], normalize(&sigma)).unwrap();
-    g.set(&registry, &[3, 3], normalize(&((r.pow(2) + a.clone().pow(2)) * theta.sin().pow(2)))).unwrap();
+    // Frame-dragging correction term included -- see
+    // oderom-components/tests/kerr.rs's own build() for why dropping it
+    // is wrong (breaks the metric determinant / Ricci-flatness).
+    g.set(
+        &registry,
+        &[3, 3],
+        normalize(
+            &((r.clone().pow(2) + a.clone().pow(2) + Expr::int(2) * m.clone() * a.pow(2) * r.clone() * theta.clone().sin().pow(2) * Expr::Pow(Box::new(sigma.clone()), -1))
+                * theta.sin().pow(2)),
+        ),
+    )
+    .unwrap();
 
     (registry, chart, g)
 }

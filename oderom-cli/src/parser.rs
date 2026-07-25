@@ -952,7 +952,7 @@ fn parse_metric_decl(toks: &mut TokStream, model: &mut Model, alias_names: &std:
     loop {
         let scope = crate::expr_parser::AliasScope { declared: &model.aliases, all_names: alias_names };
         let (indices, expr) = parse_component_line(toks, &chart, 2, &name, &scope)?;
-        tensor.set(&model.registry, &indices, normalize(&expr))?;
+        tensor.set_declared(&model.registry, &indices, normalize(&expr))?;
         if *toks.peek() == Tok::Sym(',') {
             toks.advance();
         } else {
@@ -1415,6 +1415,56 @@ metric g2 on schw bundle TM {{
         let err = expect_parse_error(src);
         let message = err.to_string();
         assert!(message.contains("alias `f` is already declared"), "{message}");
+    }
+
+    /// A metric's off-diagonal component may be declared through either
+    /// index order -- `[t,phi]` and `[phi,t]` name the same component --
+    /// and doing so with the *same* value on both sides is not the
+    /// mistake `set_declared`'s conflict check exists to catch (see the
+    /// next test for the case that is).
+    #[test]
+    fn declaring_an_off_diagonal_metric_component_both_ways_with_the_same_value_is_fine() {
+        let src = format!(
+            "{PRELUDE}
+chart kerrlike on M coords (t, r, theta, phi)
+metric km on kerrlike bundle TM {{
+  [t,t] = -1,
+  [t,phi] = M*r,
+  [phi,t] = M*r,
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+"
+        );
+        parse_model(&src).expect("declaring the same off-diagonal value both ways must not error");
+    }
+
+    /// The bug this round's `ComponentTensor::set_declared` exists to
+    /// prevent: `[t,phi]` and `[phi,t]` are the same symmetric
+    /// component, so declaring them with two *different* values is
+    /// contradictory, not "last write wins". Must be a clean parse
+    /// error naming both components and both values, never a silently
+    /// accepted metric nobody actually wrote.
+    #[test]
+    fn declaring_an_off_diagonal_metric_component_both_ways_with_conflicting_values_is_a_clean_error() {
+        let src = format!(
+            "{PRELUDE}
+chart kerrlike on M coords (t, r, theta, phi)
+metric km on kerrlike bundle TM {{
+  [t,t] = -1,
+  [t,phi] = M*r,
+  [phi,t] = 2*M*r,
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+"
+        );
+        let err = expect_parse_error(&src);
+        let message = err.to_string();
+        assert!(message.contains("[0, 3]") && message.contains("[3, 0]"), "{message}");
+        assert!(message.contains("M*r") && message.contains("2*M*r"), "{message}");
     }
 
     #[test]

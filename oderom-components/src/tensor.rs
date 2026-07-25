@@ -68,12 +68,20 @@ pub(crate) fn canonical_indices(bsgs: &Bsgs, indices: &[u8]) -> Orbit {
 pub struct ComponentTensor {
     head: HeadId,
     independent: FxHashMap<IndexTuple, Expr>,
+    /// Per orbit representative, the raw indices and raw (unscaled)
+    /// value of the *first* [`Self::set_declared`] call that landed
+    /// there -- used only to name both sides of a
+    /// [`ComponentError::ConflictingComponent`]. Never populated by the
+    /// plain [`Self::set`] (`grid_to_component_tensor` and every other
+    /// in-crate caller), so it stays empty -- and free -- outside of
+    /// parsing a user declaration.
+    declared_from: FxHashMap<IndexTuple, (IndexTuple, Expr)>,
 }
 
 impl ComponentTensor {
     /// An all-zero tensor of `head`'s declared shape and symmetry.
     pub fn new(head: HeadId) -> Self {
-        ComponentTensor { head, independent: FxHashMap::default() }
+        ComponentTensor { head, independent: FxHashMap::default(), declared_from: FxHashMap::default() }
     }
 
     pub fn head(&self) -> HeadId {
@@ -105,6 +113,55 @@ impl ComponentTensor {
             Orbit::Representative(rep, sign) => {
                 // T(indices) = sign * T(rep)  =>  T(rep) = sign * T(indices).
                 let scaled = if sign < 0 { -value } else { value };
+                self.independent.insert(rep, scaled);
+                Ok(())
+            }
+        }
+    }
+
+    /// Same as [`Self::set`], but for a component declared directly by a
+    /// user (today, exactly one call site: `oderom-cli`'s `metric`
+    /// block parser) rather than computed internally: if `indices`'
+    /// orbit was already given a *different* value by an earlier
+    /// `set_declared` call -- the `[t,phi] = X` / `[phi,t] = Y`,
+    /// `X != Y` case -- returns [`ComponentError::ConflictingComponent`]
+    /// naming both declarations exactly as written, instead of silently
+    /// keeping whichever was declared last. A second declaration that
+    /// agrees with the first (same value, accounting for the orbit's
+    /// sign) is not an error -- redeclaring the same component is not
+    /// the mistake this guards against.
+    ///
+    /// Not the function every internal caller should switch to:
+    /// `grid_to_component_tensor` writes every raw index tuple of an
+    /// already-consistent `Grid` (both `[i,j]` and `[j,i]` of a
+    /// symmetric grid, deliberately, every time), which would make the
+    /// comparison below pure overhead on a hot path -- see that
+    /// function's own doc comment. It keeps using the plain [`Self::set`].
+    pub fn set_declared(
+        &mut self,
+        registry: &Registry,
+        indices: &[u8],
+        value: Expr,
+    ) -> Result<(), ComponentError> {
+        self.check_arity(registry, indices)?;
+        let bsgs = &registry.head(self.head).symmetry;
+        match canonical_indices(bsgs, indices) {
+            Orbit::Zero => Ok(()),
+            Orbit::Representative(rep, sign) => {
+                let scaled = if sign < 0 { -value.clone() } else { value.clone() };
+                if let Some((prev_indices, prev_value)) = self.declared_from.get(&rep) {
+                    let existing = self.independent.get(&rep).cloned().unwrap_or_else(Expr::zero);
+                    if scaled != existing {
+                        return Err(ComponentError::ConflictingComponent {
+                            first_indices: prev_indices.to_vec(),
+                            first_value: prev_value.clone(),
+                            second_indices: indices.to_vec(),
+                            second_value: value,
+                        });
+                    }
+                    return Ok(());
+                }
+                self.declared_from.insert(rep.clone(), (IndexTuple::from_slice(indices), value));
                 self.independent.insert(rep, scaled);
                 Ok(())
             }

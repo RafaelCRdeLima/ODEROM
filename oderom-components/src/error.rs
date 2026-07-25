@@ -78,6 +78,22 @@ pub enum ComponentError {
     #[error("the Weyl tensor is not defined in 2 dimensions (the standard formula's 1/(n-2) term is undefined at n=2)")]
     WeylUndefinedInDimension2,
 
+    /// [`crate::tensor::ComponentTensor::set_declared`] only (never
+    /// produced by the plain, unchecked `set` that
+    /// `grid_to_component_tensor` and every other in-crate caller uses
+    /// to write every raw index tuple of an already-consistent `Grid`):
+    /// two user-written component declarations land in the same
+    /// symmetry orbit with different values -- e.g. a `.od` metric block
+    /// writing both `[t,phi] = X` and `[phi,t] = Y` with `X != Y`.
+    /// Silently keeping whichever was declared last would accept a
+    /// metric the user never actually wrote (the exact failure mode a
+    /// symmetric declaration is supposed to make impossible). Indices
+    /// and values are exactly as declared (not the internal orbit
+    /// representative or its sign-adjusted value), so the message points
+    /// at what the user actually wrote.
+    #[error("componentes conflitantes na declaracao: [{first_indices:?}] = {first_value} e [{second_indices:?}] = {second_value} nao sao compativeis pela simetria declarada")]
+    ConflictingComponent { first_indices: Vec<u8>, first_value: oderom_expr::Expr, second_indices: Vec<u8>, second_value: oderom_expr::Expr },
+
     // No variant for "the equation is not affine-linear in its own second
     // derivative": that is not a property of the metric/chart the way a
     // vanishing coefficient is -- it is a mathematical fact about what a

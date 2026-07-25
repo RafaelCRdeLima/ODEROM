@@ -1,0 +1,44 @@
+# Kerr metric, Boyer-Lindquist coordinates (t, r, theta, phi) -- vacuum,
+# axisymmetric, rotating black hole with mass M and spin parameter a.
+# The fixture this whole round exists to unlock: genuinely non-diagonal
+# (`g_t_phi` frame-dragging cross term) AND genuinely bivariate in its
+# denominator (`Sigma` depends on both `r` and `theta`, so there is no
+# single "pole variable" -- see DESIGN-RATIONAL-FORM.md section 7.1).
+#
+# Sigma = r^2 + a^2*cos(theta)^2
+# Delta = r^2 - 2*M*r + a^2
+#
+# ds^2 = -(1 - 2*M*r/Sigma) dt^2 - (4*M*a*r*sin(theta)^2/Sigma) dt dphi
+#        + (Sigma/Delta) dr^2 + Sigma dtheta^2
+#        + (r^2 + a^2 + 2*M*a^2*r*sin(theta)^2/Sigma) sin(theta)^2 dphi^2
+#
+# `g_t_phi` below carries half the `dt dphi` cross-coefficient above
+# (the line element's cross term is `2 g_t_phi dt dphi`). `g_phi_phi`
+# carries the frame-dragging correction term -- dropping it changes the
+# metric determinant (checked independently: it must reduce to
+# `-Sigma^2 sin(theta)^2`) and breaks Ricci-flatness, so it is not
+# optional simplification.
+#
+# Acceptance criteria (DESIGN-RATIONAL-FORM.md section 7.1's still-open
+# gold test, and this round's deliverable):
+#   - g^-1 g = identity (fast today: metric_inverse's {t,phi} block is
+#     detected and inverted in milliseconds).
+#   - R_ab = 0 identically (Kerr is vacuum) -- blocked today, see
+#     oderom-components/tests/kerr.rs::ricci_of_kerr_is_identically_zero.
+#   - Kretschmann K = 48*M^2*(r^2-a^2*cos(theta)^2)*((r^2+a^2*cos(theta)^2)^2
+#     - 16*r^2*a^2*cos(theta)^2) / (r^2+a^2*cos(theta)^2)^6, collapsing to
+#     48*M^2/r^6 as a -> 0.
+
+Sigma := r^2 + a^2*cos(theta)^2
+Delta := r^2 - 2*M*r + a^2
+
+manifold M dim 4
+bundle TM on M dim 4
+chart bl on M coords (t, r, theta, phi)
+metric g on bl bundle TM {
+  [t,t] = -(1 - 2*M*r/Sigma),
+  [t,phi] = -2*M*a*r*sin(theta)^2/Sigma,
+  [r,r] = Sigma/Delta,
+  [theta,theta] = Sigma,
+  [phi,phi] = (r^2 + a^2 + 2*M*a^2*r*sin(theta)^2/Sigma) * sin(theta)^2
+}

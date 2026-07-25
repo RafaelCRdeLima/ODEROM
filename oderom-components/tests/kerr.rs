@@ -80,7 +80,20 @@ fn build() -> Result<Kerr, ComponentError> {
     )?;
     g.set(&registry, &[1, 1], normalize(&(sigma.clone() * Expr::Pow(Box::new(delta), -1))))?;
     g.set(&registry, &[2, 2], normalize(&sigma))?;
-    g.set(&registry, &[3, 3], normalize(&((r.pow(2) + a.clone().pow(2)) * theta.sin().pow(2))))?;
+    // g_phi_phi carries the frame-dragging correction term
+    // `2*M*a^2*r*sin(theta)^2/Sigma` alongside `r^2+a^2` -- dropping it
+    // (as an earlier version of this fixture did) changes the metric
+    // determinant away from the known `-Sigma^2*sin(theta)^2` and
+    // breaks Ricci-flatness; see examples/kerr.od's own header for the
+    // determinant check that caught this.
+    g.set(
+        &registry,
+        &[3, 3],
+        normalize(
+            &((r.clone().pow(2) + a.clone().pow(2) + Expr::int(2) * m.clone() * a.pow(2) * r.clone() * theta.clone().sin().pow(2) * Expr::Pow(Box::new(sigma.clone()), -1))
+                * theta.sin().pow(2)),
+        ),
+    )?;
 
     let ginv = metric_inverse(&registry, &chart, &g)?;
 
