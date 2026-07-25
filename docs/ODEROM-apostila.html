@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 20mm 20mm 20mm;
+    @bottom-center {
+      content: counter(page);
+      font-family: "DejaVu Sans", sans-serif;
+      font-size: 9px;
+      color: #9a9a95;
+    }
+  }
+  @page :first { margin: 0; @bottom-center { content: none; } }
+
+  html { font-family: "DejaVu Sans", sans-serif; color: #2C2C2A; font-size: 10.5pt; line-height: 1.5; }
+  body { margin: 0; }
+
+  h1 { font-size: 20pt; color: #534AB7; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.01em; }
+  h2 { font-size: 15pt; color: #2C2C2A; margin: 26px 0 6px 0; padding-bottom: 4px; border-bottom: 2px solid #534AB7; }
+  h3 { font-size: 12pt; color: #3d3673; margin: 18px 0 4px 0; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #f2f1ec; padding: 1px 4px; border-radius: 3px; color: #3d3673; }
+  pre { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #1A1D2B; color: #eceaf5; padding: 12px 14px; border-radius: 6px; line-height: 1.45; overflow-x: auto; }
+  pre code { background: none; color: inherit; padding: 0; }
+
+  .eq { text-align: center; margin: 10px 0; font-size: 11.5pt; color: #2C2C2A; }
+  .eq-block { background: #f7f6f2; border-radius: 6px; padding: 10px 14px; margin: 10px 0; text-align: center; font-size: 11.5pt; }
+
+  .kbd { font-family: "DejaVu Sans Mono", monospace; font-size: 8.5pt; background: #fff; border: 1px solid #cfcdc4; border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; color: #2C2C2A; white-space: nowrap; }
+
+  .cover { height: 297mm; background: #534AB7; color: #fff; display: flex; flex-direction: column; justify-content: center; padding: 0 30mm; box-sizing: border-box; page-break-after: always; }
+  .cover .mark { margin-bottom: 24px; }
+  .cover h1 { color: #fff; font-size: 34pt; letter-spacing: 0.04em; margin: 0; }
+  .cover .acronym { font-size: 10.5pt; color: #b7b1e8; margin-top: 10px; font-weight: 300; font-style: italic; }
+  .cover .sub { font-size: 15pt; color: #d6d2f2; margin-top: 18px; font-weight: 300; }
+  .cover .sub2 { font-size: 11pt; color: #b7b1e8; margin-top: 4px; font-weight: 300; }
+  .cover .meta { font-size: 10pt; color: #b7b1e8; margin-top: 40px; line-height: 1.7; }
+  .cover .author { font-size: 10pt; color: #fff; margin-top: 40px; font-weight: 600; }
+
+  .note { background: #eef6f2; border-left: 4px solid #1D9E75; border-radius: 4px; padding: 10px 14px; margin: 12px 0; font-size: 9.5pt; }
+  .note strong { color: #14664b; }
+
+  .insight { background: #f1effa; border-left: 4px solid #7B6FE0; border-radius: 4px; padding: 10px 14px; margin: 12px 0; font-size: 9.5pt; }
+  .insight strong { color: #4a3fa0; }
+
+  .exercise { background: #faf9f6; border: 1px solid #e4e2da; border-radius: 6px; padding: 10px 14px; margin: 8px 0; font-size: 9.5pt; }
+  .exercise .num { font-weight: 700; color: #534AB7; }
+
+  table.ref { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 9.5pt; }
+  table.ref th { background: #534AB7; color: #fff; text-align: left; padding: 6px 10px; font-weight: 600; }
+  table.ref td { border-bottom: 1px solid #e4e2da; padding: 6px 10px; vertical-align: top; }
+  table.ref tr:nth-child(even) td { background: #faf9f6; }
+  table.ref tr { break-inside: avoid; page-break-inside: avoid; }
+
+  .toc { page-break-after: always; }
+  .toc h2 { border: none; }
+  .toc ol { list-style: none; padding-left: 0; counter-reset: toc; }
+  .toc > ol > li { counter-increment: toc; margin: 7px 0; font-size: 11pt; }
+  .toc > ol > li::before { content: counter(toc) ".  "; color: #534AB7; font-weight: 700; }
+
+  .stripe { display: inline-block; width: 3px; height: 1em; background: #d99a2b; vertical-align: -2px; margin-right: 4px; border-radius: 1px; }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="mark">
+    <svg viewBox="6.5 0 100 100" width="80" height="80" xmlns="http://www.w3.org/2000/svg">
+      <path d="M78.07 41.06A32 32 0 1 1 58.94 21.93" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+      <path d="M78.07 41.06L88.64 30.36" fill="none" stroke="#5DCAA5" stroke-width="6.5" stroke-linecap="round"/>
+      <path d="M95 24L92.5 34.2L84.7 26.5Z" fill="#5DCAA5"/>
+    </svg>
+  </div>
+  <h1>ODEROM</h1>
+  <div class="acronym">Oriented Differential Exterior calculus for Relativity, Operators and Manifolds</div>
+  <div class="sub">Cálculo tensorial em Relatividade Geral</div>
+  <div class="sub2">Uma apostila introdutória com exemplos computados pelo ODEROM</div>
+  <div class="author">Rafael Camargo Rodrigues de Lima</div>
+  <div class="meta">
+    Apostila para alunos de pós-graduação em Física &middot; todo exemplo numérico foi computado de verdade pelo ODEROM, nunca reescrito de memória
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <h2>Sumário</h2>
+  <ol>
+    <li>Introdução: por que cálculo tensorial computacional</li>
+    <li>Variedades, cartas e o tensor métrico</li>
+    <li>A conexão de Levi-Civita e os símbolos de Christoffel</li>
+    <li>O tensor de curvatura de Riemann</li>
+    <li>O tensor e o escalar de Ricci</li>
+    <li>As equações de campo de Einstein</li>
+    <li>O tensor de Weyl e a decomposição algébrica de Riemann</li>
+    <li>Invariantes escalares de curvatura</li>
+    <li>Geodésicas e o princípio variacional</li>
+    <li>Estudo de caso: Schwarzschild</li>
+    <li>Estudo de caso: Reissner-Nordström</li>
+    <li>Estudo de caso: Friedmann-Robertson-Walker</li>
+    <li>Estudo de caso: de Sitter e anti-de Sitter</li>
+    <li>Subindo e descendo índices sob demanda</li>
+    <li>Exercícios propostos</li>
+    <li>Referências e leituras complementares</li>
+  </ol>
+</div>
+
+<!-- 1 -->
+<h2>1. Introdução: por que cálculo tensorial computacional</h2>
+<p>Calcular o tensor de Riemann à mão para uma métrica de interesse físico real é um exercício que pune erro de sinal. Em quatro dimensões, o tensor de Riemann tem, a princípio, 4<sup>4</sup> = 256 componentes; a simetria de par antissimétrico reduz isso a 21 componentes independentes (seção 4 explica a contagem), e destas a maioria costuma se anular por conta de simetrias adicionais do problema físico (esfericidade, estaticidade, homogeneidade). Chegar lá exige antes computar até 40 símbolos de Christoffel independentes, cada um uma soma de derivadas de componentes da métrica contraídas com a inversa — e um único sinal trocado em algum lugar do meio do caminho produz um tensor de Ricci "quase certo", que não é zero quando deveria ser, ou que é zero quando não deveria.</p>
+<p>O <strong>ODEROM</strong> existe para essa conta: dada uma métrica declarada simbolicamente (parâmetros como M, Q, H permanecem livres — nada é avaliado numericamente), ele deriva Christoffel, Riemann, Ricci, o tensor de Einstein, o tensor de Weyl e os invariantes escalares de curvatura por álgebra simbólica exata, sem aproximação e sem intervenção manual em nenhum passo intermediário. Esta apostila ensina o conteúdo de geometria diferencial por trás de cada um desses objetos — sua definição, seu significado físico, suas propriedades — e mostra, a cada passo, a consulta real que o ODEROM aceita e a saída real que ele produz. Nenhum número nesta apostila foi escrito de memória: cada transcrição abaixo foi copiada diretamente da execução do programa.</p>
+<div class="insight">
+  <strong>Pré-requisitos.</strong> Esta apostila assume familiaridade de pós-graduação com relatividade restrita, notação de índices e a convenção de soma de Einstein, e uma primeira exposição (de curso ou de livro-texto) aos conceitos de variedade, vetor tangente e tensor. O objetivo aqui não é reconstruir esses fundamentos, e sim consolidar o cálculo tensorial de curvatura — o "motor" de qualquer curso de Relatividade Geral — com uma ferramenta que verifica cada passo por álgebra exata.
+</div>
+
+<!-- 2 -->
+<h2>2. Variedades, cartas e o tensor métrico</h2>
+<p>Uma variedade diferenciável M de dimensão n é, localmente, indistinguível de ℝⁿ: uma <strong>carta</strong> é um sistema de coordenadas x<sup>μ</sup> = (x<sup>0</sup>, x<sup>1</sup>, ..., x<sup>n&minus;1</sup>) válido numa vizinhança de M. O <strong>tensor métrico</strong> g<sub>μν</sub> é uma forma bilinear simétrica, não-degenerada, sobre o espaço tangente em cada ponto — o objeto que define distância, ângulo e, em relatividade, a estrutura causal (o que é temporóide, espacialóide, nulo):</p>
+<div class="eq-block">ds² = g<sub>μν</sub> dx<sup>μ</sup> dx<sup>ν</sup></div>
+<p>Esta apostila e o ODEROM usam a convenção de assinatura <strong>"mais-maioria"</strong> (&minus;,+,+,+): a componente temporal da métrica é negativa, as espaciais positivas — visível diretamente na métrica de Schwarzschild logo abaixo, onde g<sub>tt</sub> = &minus;(1&minus;2M/r) carrega o sinal de menos. Um curso ou livro-texto que use a convenção oposta (+,&minus;,&minus;,&minus;) terá o escalar de Ricci e outros invariantes com o sinal global trocado em relação ao que o ODEROM calcula — vale conferir a convenção antes de comparar um resultado com uma fonte externa.</p>
+<p>A <strong>métrica inversa</strong> g<sup>μν</sup> é definida pela contração g<sup>μν</sup>g<sub>νρ</sub> = δ<sup>μ</sup><sub>ρ</sub> (delta de Kronecker) — é ela quem sobe índices, e é dela que praticamente todo o resto desta apostila depende (Christoffel precisa dela; subir qualquer índice de Riemann, Ricci ou Weyl precisa dela). Declarar uma métrica no ODEROM é declarar a variedade, o fibrado tangente, a carta e as componentes independentes de g<sub>μν</sub> — a métrica de Schwarzschild, usada como exemplo-guia do início ao fim desta apostila:</p>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+
+chart schw on M coords (t, r, theta, phi)
+
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r),
+  [r,r] = 1/(1 - 2*M/r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p>Cada linha <code>[i,j] = EXPR</code> declara diretamente uma componente g<sub>ij</sub> (índices em baixo) — nunca a inversa, que o ODEROM deriva sozinho a partir daqui. M é um parâmetro livre, símbolo, nunca um número; qualquer consulta subsequente contra este arquivo devolve uma expressão em M (e, quando aparecer, r e θ), nunca um valor avaliado.</p>
+<div class="note">
+  <strong>Detecção de estrutura na inversão.</strong> O ODEROM inverte a métrica reconhecendo sua estrutura: diagonal (todo exemplo desta apostila), diagonal por blocos (um par de coordenadas acoplado, como o termo cruzado g<sub>tφ</sub> de Kerr), ou geral. O caminho diagonal — o único que os estudos de caso aqui usam — é aritmética direta, um recíproco por componente, e é exatamente tão rápido quanto essa simplicidade sugere.
+</div>
+
+<!-- 3 -->
+<h2>3. A conexão de Levi-Civita e os símbolos de Christoffel</h2>
+<p>Derivar um campo vetorial componente a componente (∂<sub>b</sub>V<sup>a</sup>) não produz um tensor — o resultado depende da carta de um jeito que uma quantidade geométrica genuína não pode depender. A <strong>derivada covariante</strong> ∇ corrige isso, e a <strong>conexão de Levi-Civita</strong> é a única conexão (i) livre de torção e (ii) compatível com a métrica (∇g = 0) que existe em qualquer variedade Riemanniana ou pseudo-Riemanniana — o teorema fundamental da geometria Riemanniana. Seus coeficientes numa carta são os <strong>símbolos de Christoffel</strong>:</p>
+<div class="eq-block">Γ<sup>a</sup><sub>bc</sub> = ½ g<sup>ad</sup> (∂<sub>b</sub>g<sub>dc</sub> + ∂<sub>c</sub>g<sub>db</sub> &minus; ∂<sub>d</sub>g<sub>bc</sub>)</div>
+<p>simétricos nos dois índices de baixo (Γ<sup>a</sup><sub>bc</sub> = Γ<sup>a</sup><sub>cb</sub>) — consequência direta de ser livre de torção. Fisicamente, Γ é o que diz como uma base de coordenadas gira e se estica de ponto a ponto: um vetor "transportado paralelamente" ao longo de uma curva satisfaz dV<sup>a</sup>/dλ + Γ<sup>a</sup><sub>bc</sub>V<sup>b</sup> (dx<sup>c</sup>/dλ) = 0, e é exatamente esse transporte paralelo que define "linha reta" (geodésica, seção 9) numa variedade curva.</p>
+<div class="insight">
+  <strong>Γ não é um tensor — e isso importa para o que o ODEROM aceita calcular.</strong> Sob uma mudança de coordenadas x → x', Γ se transforma com um termo <em>não-homogêneo</em>:
+  <div class="eq-block" style="margin-top:8px">Γ'<sup>a</sup><sub>bc</sub> = (∂x'<sup>a</sup>/∂x<sup>d</sup>)(∂x<sup>e</sup>/∂x'<sup>b</sup>)(∂x<sup>f</sup>/∂x'<sup>c</sup>) Γ<sup>d</sup><sub>ef</sub> + (∂x'<sup>a</sup>/∂x<sup>d</sup>)(∂²x<sup>d</sup>/∂x'<sup>b</sup>∂x'<sup>c</sup>)</div>
+  O segundo termo — ausente na lei de transformação de qualquer tensor genuíno — é precisamente o que permite Γ ser identicamente nulo numa carta (localmente inercial, no ponto) e não-nulo em outra: é essa "não-tensorialidade" que carrega toda a informação sobre a conexão. Subir ou descer os índices de Γ com a métrica, mecanicamente, produziria um conjunto de números que não se transforma nem como Γ, nem como tensor, nem como nenhum objeto geométrico reconhecível — por isso o ODEROM recusa a marcação de variância em <code>christoffel</code> (seção 14 explica a sintaxe e mostra a recusa).
+</div>
+<p>Consulta real, sobre o arquivo de Schwarzschild da seção 2 (as 13 componentes independentes não-nulas de 40 possíveis, o resto identicamente zero):</p>
+<pre><code>oderom&gt; christoffel
+Gamma[^t,t,r] = -M/(2*M*r - r^2)
+Gamma[^t,r,t] = -M/(2*M*r - r^2)
+Gamma[^r,t,t] = (M*r - 2*M^2)/r^3
+Gamma[^r,r,r] = M/(2*M*r - r^2)
+Gamma[^r,theta,theta] = 2*M - r
+Gamma[^r,phi,phi] = 2*M*sin(theta)^2 - r*sin(theta)^2
+Gamma[^theta,r,theta] = r^-1
+Gamma[^theta,theta,r] = r^-1
+Gamma[^theta,phi,phi] = -sin(theta)*cos(theta)
+Gamma[^phi,r,phi] = r^-1
+Gamma[^phi,theta,phi] = cos(theta)/sin(theta)
+Gamma[^phi,phi,r] = r^-1
+Gamma[^phi,phi,theta] = cos(theta)/sin(theta)
+51 independent components identically zero</code></pre>
+
+<!-- 4 -->
+<h2>4. O tensor de curvatura de Riemann</h2>
+<p>Curvatura é, precisamente, a falha do transporte paralelo em comutar: transportar um vetor ao longo de um pequeno paralelogramo fechado e voltar ao ponto de partida só devolve o vetor original se o espaço for plano. O comutador das derivadas covariantes mede exatamente essa falha, e define o <strong>tensor de Riemann</strong>:</p>
+<div class="eq-block">[∇<sub>c</sub>, ∇<sub>d</sub>] V<sup>a</sup> = R<sup>a</sup><sub>bcd</sub> V<sup>b</sup></div>
+<p>em termos de Γ:</p>
+<div class="eq-block">R<sup>a</sup><sub>bcd</sub> = ∂<sub>c</sub>Γ<sup>a</sup><sub>bd</sub> &minus; ∂<sub>d</sub>Γ<sup>a</sup><sub>bc</sub> + Γ<sup>a</sup><sub>ce</sub>Γ<sup>e</sup><sub>bd</sub> &minus; Γ<sup>a</sup><sub>de</sub>Γ<sup>e</sup><sub>bc</sub></div>
+<p>Ao contrário de Γ, R <em>é</em> um tensor — sua lei de transformação é homogênea, e "R = 0 numa carta" implica "R = 0 em toda carta" (espaço localmente plano). Totalmente covariante (R<sub>abcd</sub> = g<sub>ae</sub>R<sup>e</sup><sub>bcd</sub>), carrega três simetrias algébricas independentes:</p>
+<ul>
+  <li>antissimétrico no último par: R<sub>abcd</sub> = &minus;R<sub>abdc</sub>;</li>
+  <li>antissimétrico no primeiro par: R<sub>abcd</sub> = &minus;R<sub>bacd</sub>;</li>
+  <li>simétrico sob troca dos dois pares: R<sub>abcd</sub> = R<sub>cdab</sub>;</li>
+</ul>
+<p>mais a <strong>primeira identidade de Bianchi</strong> (algébrica, cíclica nos três últimos índices): R<sub>a[bcd]</sub> = R<sub>abcd</sub> + R<sub>acdb</sub> + R<sub>adbc</sub> = 0. Contando só as três simetrias de par (sem Bianchi), o espaço de tensores com essa forma em n dimensões tem dimensão N(N+1)/2, onde N = n(n&minus;1)/2 é o número de "pares antissimétricos" (bivetores); em n=4, N=6 e N(N+1)/2 = 21. A primeira identidade de Bianchi remove exatamente uma restrição a mais, chegando aos 20 componentes independentes de verdade que a literatura costuma citar para 4D — mas <strong>21</strong>, não 20, é o que uma contagem por simetria de permutação de índices (sem impor Bianchi) enxerga, e é essa a contagem que aparece na saída do ODEROM a seguir.</p>
+<p>Consulta real (a partir da métrica de Schwarzschild — forma totalmente covariante, primeiro índice já baixado):</p>
+<pre><code>oderom&gt; riemann
+R[t,r,t,r] = 2*M/(-r^3)
+  (4 components by symmetry)
+R[t,theta,t,theta] = (M*r - 2*M^2)/r^2
+  (4 components by symmetry)
+R[t,phi,t,phi] = (M*r*sin(theta)^2 - 2*M^2*sin(theta)^2)/r^2
+  (4 components by symmetry)
+R[r,theta,r,theta] = M/(2*M - r)
+  (4 components by symmetry)
+R[r,phi,r,phi] = M*sin(theta)^2/(2*M - r)
+  (4 components by symmetry)
+R[theta,phi,theta,phi] = 2*M*r*sin(theta)^2
+  (4 components by symmetry)
+15 independent components identically zero</code></pre>
+<p>Seis famílias de componentes, cada uma representando quatro componentes brutas equivalentes por simetria (R<sub>trtr</sub> = R<sub>rtrt</sub>, por exemplo) — 6+15 = 21, a contagem da seção acima. O tensor de Riemann de Schwarzschild <strong>não</strong> é identicamente nulo (o espaço é curvo fora da fonte), mesmo sendo, como a próxima seção mostra, um espaço de vácuo.</p>
+
+<!-- 5 -->
+<h2>5. O tensor e o escalar de Ricci</h2>
+<p>O <strong>tensor de Ricci</strong> é o traço do tensor de Riemann sobre o primeiro e o terceiro índice:</p>
+<div class="eq-block">R<sub>bd</sub> = R<sup>a</sup><sub>bad</sub></div>
+<p>simétrico (R<sub>bd</sub> = R<sub>db</sub>), e o <strong>escalar de Ricci</strong> é o traço de Ricci com a métrica inversa:</p>
+<div class="eq-block">R = g<sup>bd</sup> R<sub>bd</sub></div>
+<p>Ricci mede a parte da curvatura que afeta <em>volume</em> — como um pequeno feixe de geodésicas converge ou diverge em média — e é exatamente o objeto que aparece do lado esquerdo das equações de campo (seção 6). Um espaço de <strong>vácuo</strong> (sem matéria/energia na região) satisfaz R<sub>ab</sub> = 0 identicamente — não porque o espaço seja plano (Riemann pode, e em geral vai, continuar não-nulo), mas porque as equações de Einstein no vácuo <em>são</em> R<sub>ab</sub>=0. Schwarzschild é o exemplo canônico:</p>
+<pre><code>oderom&gt; ricci
+10 independent components identically zero
+
+oderom&gt; scalar
+0</code></pre>
+<p>Contraste instrutivo: Reissner-Nordström (uma carga elétrica pontual, seção 11) tem escalar de Ricci R = 0 <strong>mas</strong> tensor de Ricci genuinamente não-nulo — o campo eletromagnético não é "vácuo" no sentido de R<sub>ab</sub>=0, mesmo sendo traço-nulo:</p>
+<pre><code>oderom&gt; ricci
+Ricci[t,t] = (2*M*Q^2*r - Q^2*r^2 - Q^4)/(-r^6)
+Ricci[r,r] = Q^2/(2*M*r^3 - Q^2*r^2 - r^4)
+Ricci[theta,theta] = Q^2/r^2
+Ricci[phi,phi] = Q^2*sin(theta)^2/r^2
+6 independent components identically zero
+
+oderom&gt; scalar
+0</code></pre>
+<div class="insight">
+  <strong>Por que o traço se anula aqui.</strong> O tensor de energia-momento eletromagnético T<sub>ab</sub> (o campo de Maxwell puro) é traço-nulo, T<sup>a</sup><sub>a</sub> = 0 — uma propriedade da invariância conforme do eletromagnetismo em 4D. Como as equações de Einstein ligam R (via o traço de G<sub>ab</sub>) diretamente ao traço de T<sub>ab</sub> (seção 6 deriva essa relação), R = 0 em Reissner-Nordström é consequência direta dessa propriedade do campo-fonte, não uma coincidência do cálculo.
+</div>
+
+<!-- 6 -->
+<h2>6. As equações de campo de Einstein</h2>
+<p>O <strong>tensor de Einstein</strong> combina Ricci e seu traço numa forma cuja divergência covariante se anula identicamente (consequência da segunda identidade de Bianchi, diferencial — ∇<sub>[e</sub>R<sub>ab]cd</sub> = 0 — contraída duas vezes), a propriedade que faz dele o lado geométrico correto de uma lei de conservação:</p>
+<div class="eq-block">G<sub>ab</sub> = R<sub>ab</sub> &minus; ½ g<sub>ab</sub> R</div>
+<p>As equações de campo de Einstein (unidades geometrizadas, G=c=1) igualam G à fonte de matéria/energia:</p>
+<div class="eq-block">G<sub>ab</sub> + Λg<sub>ab</sub> = 8π T<sub>ab</sub></div>
+<p>Tomando o traço dos dois lados (g<sup>ab</sup>G<sub>ab</sub> = R &minus; 2R = &minus;R, em 4D): &minus;R + 4Λ = 8π T, onde T = T<sup>a</sup><sub>a</sub>. No vácuo sem constante cosmológica (T=0, Λ=0), isso força R=0 — e substituindo de volta em G<sub>ab</sub>=0 obtém-se R<sub>ab</sub>=0: <strong>a equação de campo no vácuo é exatamente a condição de Ricci-nulidade da seção 5</strong>, não uma coincidência de notação.</p>
+<p>Schwarzschild, vácuo genuíno — G idêntico a zero, byte a byte igual ao <code>ricci</code> da seção anterior:</p>
+<pre><code>oderom&gt; einstein
+10 independent components identically zero</code></pre>
+<p>Reissner-Nordström, onde R=0 mas R<sub>ab</sub>≠0 (seção 5): a fórmula G<sub>ab</sub> = R<sub>ab</sub> &minus; ½g<sub>ab</sub>·0 colapsa para G<sub>ab</sub> = R<sub>ab</sub> — <code>einstein</code> e <code>ricci</code> saem <strong>idênticos</strong>, não apenas parecidos:</p>
+<pre><code>oderom&gt; einstein
+G[t,t] = (2*M*Q^2*r - Q^2*r^2 - Q^4)/(-r^6)
+G[r,r] = Q^2/(2*M*r^3 - Q^2*r^2 - r^4)
+G[theta,theta] = Q^2/r^2
+G[phi,phi] = Q^2*sin(theta)^2/r^2
+6 independent components identically zero</code></pre>
+
+<!-- 7 -->
+<h2>7. O tensor de Weyl e a decomposição algébrica de Riemann</h2>
+<p>O tensor de Riemann se decompõe algebricamente numa parte que Ricci determina inteiramente e num resto — o <strong>tensor de Weyl</strong> C<sub>abcd</sub> — que nenhum traço vê:</p>
+<div class="eq-block">
+  C<sub>abcd</sub> = R<sub>abcd</sub> &minus; 1/(n&minus;2) (g<sub>ac</sub>R<sub>db</sub> &minus; g<sub>ad</sub>R<sub>cb</sub> &minus; g<sub>bc</sub>R<sub>da</sub> + g<sub>bd</sub>R<sub>ca</sub>)<br>
+  + R/((n&minus;1)(n&minus;2)) (g<sub>ac</sub>g<sub>db</sub> &minus; g<sub>ad</sub>g<sub>cb</sub>)
+</div>
+<p>completamente traço-nulo (qualquer contração de dois índices com a métrica inversa dá zero) e invariante conforme (C não muda sob g → Ω²(x)g, para qualquer função Ω positiva) — a parte "puramente conforme, sem informação de volume" da curvatura. Fisicamente, é o Weyl que carrega força de maré e ondas gravitacionais <em>no vácuo</em>: numa região sem matéria, R<sub>ab</sub>=0, então toda a curvatura restante — e ela pode ser, e em geral é, genuinamente não-nula — é Weyl.</p>
+<p>A fórmula é indefinida em n=2 (o termo 1/(n&minus;2) estoura — o próprio tensor de Riemann em 2D tem uma única componente independente, e não sobra informação "puramente conforme" para separar), e o ODEROM recusa antes de dividir por zero em vez de travar ou inventar um valor:</p>
+<pre><code>$ oderom weyl hyperbolic_plane.od
+error: the Weyl tensor is not defined in 2 dimensions (the standard
+  formula's 1/(n-2) term is undefined at n=2)</code></pre>
+<p>Em exatamente n=3, a fórmula é bem definida e o resultado é identicamente zero — um teorema real (em 3D, Riemann tem tantas componentes independentes quanto Ricci, então Ricci já determina Riemann por completo), não um caso especial no código: a mesma fórmula de qualquer n≥3 é usada, e o zero sai por conta própria.</p>
+<p>Em Schwarzschild (vácuo, R<sub>ab</sub>=0 e R=0), os termos de correção somem inteiramente e C<sub>abcd</sub> = R<sub>abcd</sub> — <code>weyl</code> e <code>riemann</code> saem byte a byte idênticos:</p>
+<pre><code>oderom&gt; weyl
+R[t,r,t,r] = 2*M/(-r^3)
+  (4 components by symmetry)
+...
+15 independent components identically zero</code></pre>
+<p>Em Reissner-Nordström, Weyl é genuinamente diferente de Riemann, e completamente traço-nulo:</p>
+<div class="insight"><strong>Exercício mental antes de calcular:</strong> como R=0 em Reissner-Nordström (seção 5), a correção de traço na fórmula de C só envolve o produto g·R<sub>ab</sub> diretamente (o termo em R/(n&minus;1)(n&minus;2) já se anula sozinho) — vale conferir essa simplificação contra a saída real do ODEROM como exercício (seção 15, exercício 7).</div>
+
+<!-- 8 -->
+<h2>8. Invariantes escalares de curvatura</h2>
+<p>Um invariante escalar de curvatura não depende de carta — ao contrário de uma componente individual de Riemann/Ricci (que pode se anular numa carta e não noutra), um invariante que se anula é uma afirmação sobre a geometria em si. O mais usado, o <strong>escalar de Kretschmann</strong>, é a contração completa de Riemann consigo mesmo:</p>
+<div class="eq-block">K = R<sub>abcd</sub> R<sup>abcd</sup></div>
+<p>Sua aplicação clássica: distinguir uma <strong>singularidade de curvatura</strong> genuína (onde a física realmente diverge) de uma <strong>singularidade de coordenadas</strong> (um artefato do sistema de coordenadas escolhido, removível trocando de carta). Em Schwarzschild:</p>
+<pre><code>oderom&gt; kretschmann
+48*M^2/r^6</code></pre>
+<p>K diverge quando r → 0 (singularidade de curvatura genuína — a física realmente é mal-comportada ali) mas é <strong>perfeitamente finito</strong> em r = 2M, o raio de Schwarzschild — a aparente singularidade da métrica ali (g<sub>rr</sub> = 1/(1&minus;2M/r) diverge em r=2M) é puramente um artefato da carta (t,r,θ,φ), removível por uma troca de coordenadas (Eddington-Finkelstein, Kruskal), não uma singularidade física. É exatamente esse cálculo — K finito num ponto onde a métrica em si parece explodir — que historicamente resolveu a confusão entre "horizonte de eventos" e "singularidade" no início do desenvolvimento da teoria.</p>
+<p>Dois outros invariantes quadráticos, e a densidade de Gauss-Bonnet/Euler (pura recombinação dos três anteriores, sem cálculo de curvatura adicional):</p>
+<div class="eq-block">R<sub>ab</sub>R<sup>ab</sup> &nbsp;&nbsp;&nbsp; C<sub>abcd</sub>C<sup>abcd</sup> &nbsp;&nbsp;&nbsp; R<sub>abcd</sub>R<sup>abcd</sup> &minus; 4R<sub>ab</sub>R<sup>ab</sup> + R²</div>
+<p>Em 4D vale a identidade R<sub>abcd</sub>R<sup>abcd</sup> = C<sub>abcd</sub>C<sup>abcd</sup> + 2R<sub>ab</sub>R<sup>ab</sup> &minus; R²/3 (Riemann² se separa em parte-Weyl e parte-Ricci) — em Reissner-Nordström, onde R=0, o último termo some e a identidade simplifica para Kretschmann = Weyl² + 2·Ricci² exatamente, conferido contra as três consultas independentes:</p>
+<pre><code>oderom&gt; riccisquare
+4*Q^4/r^8
+
+oderom&gt; weylsquare
+(-96*M*Q^2*r + 48*M^2*r^2 + 48*Q^4)/r^8
+
+oderom&gt; kretschmann
+(-96*M*Q^2*r + 48*M^2*r^2 + 56*Q^4)/r^8
+
+oderom&gt; gaussbonnet
+(-96*M*Q^2*r + 48*M^2*r^2 + 40*Q^4)/r^8</code></pre>
+<p>(48+2·4 = 56 — o coeficiente de Q⁴ em <code>kretschmann</code> bate exatamente com weylsquare + 2·riccisquare, três consultas independentes concordando.)</p>
+
+<!-- 9 -->
+<h2>9. Geodésicas e o princípio variacional</h2>
+<p>Uma <strong>geodésica</strong> extremiza o comprimento (ou tempo próprio, para uma curva temporóide) entre dois pontos — o princípio variacional δ∫√(±g<sub>ab</sub>ẋ<sup>a</sup>ẋ<sup>b</sup>) dλ = 0 leva, via Euler-Lagrange, à equação geodésica:</p>
+<div class="eq-block">ẍ<sup>a</sup> + Γ<sup>a</sup><sub>bc</sub> ẋ<sup>b</sup> ẋ<sup>c</sup> = 0</div>
+<p>uma equação por coordenada, envolvendo só Γ — nunca a métrica inversa diretamente, então <code>geodesic</code>/<code>accel</code> funcionam a partir de uma <code>connection</code> pura, sem precisar de uma métrica declarada (ao contrário de <code>scalar</code>/<code>kretschmann</code>, seção 5). Fisicamente: é a trajetória de queda livre — de uma partícula massiva (curva temporóide, parâmetro λ = tempo próprio τ) ou de um fóton (curva nula). As quatro equações de Schwarzschild, parametrizadas por τ:</p>
+<pre><code>oderom&gt; geodesic tau
+(2*M*r*t''(tau) - 2*M*r'(tau)*t'(tau) - r^2*t''(tau))/(2*M*r - r^2) = 0
+(M*r^2*r'(tau)^2 - M*r^2*t'(tau)^2 + 2*M*r^3*r''(tau)
+  - 4*M*r^4*sin(theta)^2*phi'(tau)^2 - 4*M*r^4*theta'(tau)^2
+  + 4*M^2*r*t'(tau)^2 + 4*M^2*r^3*sin(theta)^2*phi'(tau)^2
+  + 4*M^2*r^3*theta'(tau)^2 - 4*M^3*t'(tau)^2 - r^4*r''(tau)
+  + r^5*sin(theta)^2*phi'(tau)^2 + r^5*theta'(tau)^2)/(2*M*r^3 - r^4) = 0
+(-r*sin(theta)*cos(theta)*phi'(tau)^2 + r*theta''(tau)
+  + 2*r'(tau)*theta'(tau))/r = 0
+(r*sin(theta)*phi''(tau) + 2*r*cos(theta)*phi'(tau)*theta'(tau)
+  + 2*sin(theta)*phi'(tau)*r'(tau))/(r*sin(theta)) = 0</code></pre>
+<p><code>accel</code> resolve o mesmo sistema para a segunda derivada de cada coordenada isoladamente (ẍ<sup>a</sup> = f<sup>a</sup>(x,ẋ)) — a forma que um integrador numérico consome diretamente, útil para simular órbitas sem precisar isolar cada equação à mão.</p>
+
+<!-- 10 -->
+<h2>10. Estudo de caso: Schwarzschild</h2>
+<p>A solução de vácuo, estática, esfericamente simétrica — a métrica externa de qualquer corpo esfericamente simétrico não-rotante (teorema de Birkhoff: é a <em>única</em> solução de vácuo esfericamente simétrica, mesmo permitindo dependência temporal).</p>
+<div class="eq-block">ds² = &minus;(1&minus;2M/r)dt² + dr²/(1&minus;2M/r) + r²dθ² + r²sin²θ dφ²</div>
+<table class="ref">
+<tr><th>Quantidade</th><th>Resultado</th></tr>
+<tr><td>R<sub>ab</sub></td><td>identicamente zero (vácuo)</td></tr>
+<tr><td>R</td><td>0</td></tr>
+<tr><td>G<sub>ab</sub></td><td>identicamente zero</td></tr>
+<tr><td>C<sub>abcd</sub></td><td>= R<sub>abcd</sub> (vácuo: Weyl é toda a curvatura)</td></tr>
+<tr><td>Kretschmann K</td><td>48M²/r⁶ — diverge em r=0, finito em r=2M</td></tr>
+</table>
+<p>O raio r=2M é o horizonte de eventos; a coordenada r deixa de ser espacialóide dentro dele (g<sub>rr</sub> troca de sinal), mas nenhum invariante escalar detecta nada de especial ali — só a carta (t,r,θ,φ) tem um problema em r=2M, não a geometria.</p>
+
+<!-- 11 -->
+<h2>11. Estudo de caso: Reissner-Nordström</h2>
+<p>Eletrovácuo esfericamente simétrico e estático — a solução externa de um corpo esfericamente simétrico com carga elétrica Q e massa M, sem rotação.</p>
+<div class="eq-block">ds² = &minus;(1&minus;2M/r+Q²/r²)dt² + dr²/(1&minus;2M/r+Q²/r²) + r²dθ² + r²sin²θ dφ²</div>
+<table class="ref">
+<tr><th>Quantidade</th><th>Resultado</th></tr>
+<tr><td>R</td><td>0 (traço nulo, campo eletromagnético — seção 5)</td></tr>
+<tr><td>R<sub>ab</sub></td><td>genuinamente não-nulo (não é vácuo)</td></tr>
+<tr><td>G<sub>ab</sub></td><td>= R<sub>ab</sub> exatamente (segue de R=0)</td></tr>
+<tr><td>Kretschmann K</td><td>48M²/r⁶ &minus; 96MQ²/r⁷ + 56Q⁴/r⁸</td></tr>
+</table>
+<p>O parâmetro extra Q é exatamente o motivo pelo qual Reissner-Nordström é o fixture de regressão permanente do próprio motor do ODEROM: um f(r) de três termos (contra os dois de Schwarzschild) já expõe crescimento de expressão intermediária que um f(r) de dois termos nunca revela — a razão histórica por trás do redesenho do normalizador simbólico do projeto (documentado em DESIGN-RATIONAL-FORM.md, para quem quiser a história completa).</p>
+
+<!-- 12 -->
+<h2>12. Estudo de caso: Friedmann-Robertson-Walker</h2>
+<p>A métrica cosmológica padrão — espacialmente plana, homogênea e isotrópica, com um fator de escala a(t) genérico (não resolvido: a(t) entra como uma <strong>função indeterminada</strong>, nunca avaliada, e o ODEROM deriva Γ, Ricci e o escalar corretamente em termos de a(t), a'(t), a''(t) sem que o usuário diga o que a(t) é):</p>
+<div class="eq-block">ds² = &minus;dt² + a(t)²(dx² + dy² + dz²)</div>
+<pre><code>oderom&gt; scalar
+(6*a(t)*a''(t) + 6*a'(t)^2)/a(t)^2</code></pre>
+<p>que é R = 6(ä/a + (ȧ/a)²) — a forma fechada padrão de qualquer livro-texto de cosmologia, obtida aqui sem nunca especificar uma equação de estado ou resolver a dinâmica de a(t). A seção 15 (exercício 10) propõe o próximo passo natural: combinar o <code>einstein</code> desta métrica com um tensor de energia-momento de fluido perfeito, à mão, para chegar às equações de Friedmann.</p>
+
+<!-- 13 -->
+<h2>13. Estudo de caso: de Sitter e anti-de Sitter</h2>
+<p>Os dois espaços-tempo de <strong>curvatura constante</strong> — maximamente simétricos, R<sub>abcd</sub> inteiramente determinado por R (nenhuma informação de Weyl sobra: C<sub>abcd</sub> ≡ 0 nos dois). De Sitter (curvatura positiva, fatiamento espacialmente plano, parâmetro H):</p>
+<div class="eq-block">ds² = &minus;dt² + e<sup>2Ht</sup>(dx²+dy²+dz²)</div>
+<pre><code>oderom&gt; scalar
+12*H^2
+
+oderom&gt; weyl
+21 independent components identically zero</code></pre>
+<p>Anti-de Sitter (curvatura negativa, coordenadas de Poincaré, o espaço-tempo de fundo da correspondência AdS/CFT):</p>
+<div class="eq-block">ds² = (1/H²z²) (&minus;dt² + dx² + dy² + dz²)</div>
+<pre><code>oderom&gt; scalar
+-12*H^2
+
+oderom&gt; ricci
+Ricci[t,t] = 3/z^2
+Ricci[x,x] = -3/z^2
+Ricci[y,y] = -3/z^2
+Ricci[z,z] = -3/z^2
+6 independent components identically zero</code></pre>
+<p>Confira: R<sub>ab</sub> = &minus;3H²g<sub>ab</sub> em anti-de Sitter — g<sub>tt</sub> = &minus;1/(H²z²), então &minus;3H²g<sub>tt</sub> = 3/z², batendo exatamente com <code>ricci</code> acima (exercício 9 propõe conferir as quatro componentes por conta própria).</p>
+
+<!-- 14 -->
+<h2>14. Subindo e descendo índices sob demanda</h2>
+<p>As seções anteriores mostraram cada tensor na sua variância "natural" — <code>riemann</code>/<code>weyl</code> totalmente covariantes, <code>christoffel</code> misto Γ<sup>a</sup><sub>bc</sub>. Muitas construções físicas precisam de outra variância: a própria definição de Ricci (seção 5) contrai R<sup>a</sup><sub>bad</sub>, o tensor de Riemann <em>misto</em>; a classificação de Petrov do tensor de Weyl trabalha com C<sup>a</sup><sub>bcd</sub>; um cálculo de autovalor de curvatura precisa de um índice em cima e outro embaixo. O ODEROM aceita um marcador de variância, entre colchetes, ao final de uma consulta sobre um tensor genuíno:</p>
+<pre><code>riemann [up,down,down,down]</code></pre>
+<p>um <code>up</code>/<code>down</code> por índice, na ordem em que aparecem — <code>up</code> sobe com g<sup>ab</sup> se o índice ainda não for contravariante, <code>down</code> desce com g<sub>ab</sub> se ainda não for covariante; um índice já na variância pedida fica como está. Em Schwarzschild, subindo o primeiro índice de Riemann:</p>
+<pre><code>oderom&gt; riemann [up,down,down,down]
+R[^t,r,t,r] = 2*M/(-2*M*r^2 + r^3)
+R[^t,r,r,t] = 2*M/(2*M*r^2 - r^3)
+R[^t,theta,t,theta] = M/(-r)
+R[^t,theta,theta,t] = M/r
+R[^r,t,t,r] = (2*M*r - 4*M^2)/r^4
+...
+232 independent components identically zero</code></pre>
+<p>o <code>^</code> na frente de um nome marca o índice contravariante — a mesma tipografia que <code>christoffel</code> já usa para Γ<sup>a</sup><sub>bc</sub>. Contraindo esse resultado sobre o primeiro e terceiro índice reproduz exatamente <code>ricci</code> — a própria definição da seção 5, verificável componente a componente.</p>
+<div class="note">
+  <strong>Christoffel continua barrado.</strong> O marcador de variância exige um tensor genuíno por trás — a razão matemática está na seção 3 (Γ não é tensor, então "subir seu índice" não tem significado geométrico). <code>christoffel</code> sem marcador nenhum continua funcionando normalmente; só a mudança de variância é recusada:
+  <pre style="margin-top:8px"><code>oderom&gt; christoffel [up,down,down]
+error: Christoffel is not a tensor -- it transforms with a
+  non-homogeneous term, which is exactly what makes it a connection
+  instead of a tensor. Raising or lowering its indices with the metric
+  would not produce a tensor, a connection, or any geometric object --
+  it would just be numbers with no meaning. For curvature, use
+  `riemann` instead.</code></pre>
+</div>
+<p>O marcador sempre exige uma métrica declarada de verdade (subir/descer índice usa g<sup>ab</sup>/g<sub>ab</sub>, que só existem a partir de uma métrica — nunca de uma <code>connection</code> pura), e um escalar (<code>scalar</code>, <code>kretschmann</code>, e os demais invariantes) não tem índice nenhum para marcar — os dois casos recusam com uma mensagem que explica o porquê, nunca em silêncio.</p>
+
+<!-- 15 -->
+<h2>15. Exercícios propostos</h2>
+<p>Todos resolvíveis com o ODEROM sozinho ou com o ODEROM mais uma conta curta a lápis — cada um tem uma resposta que a ferramenta pode conferir, não apenas produzir.</p>
+<div class="exercise"><span class="num">1.</span> Confirme, a partir da saída de <code>riemann</code> em Schwarzschild (seção 4), que a primeira identidade de Bianchi R<sub>t[rtθ]</sub> = 0 vale para uma escolha concreta de índices, somando as três permutações cíclicas à mão a partir dos valores impressos.</div>
+<div class="exercise"><span class="num">2.</span> A métrica de FRW (seção 12) é conformemente plana (isso é um teorema: toda métrica homogênea e isotrópica é). Confirme rodando <code>weyl</code> sobre ela e observando que toda componente independente sai identicamente zero, para a(t) genérico — sem nunca especificar o que a(t) é.</div>
+<div class="exercise"><span class="num">3.</span> A partir de <code>accel</code> em Schwarzschild, isole a equação radial e reescreva-a na forma de "energia efetiva" ṙ² + V<sub>eff</sub>(r) = E — identifique o termo que faz o papel do potencial newtoniano &minus;M/r e o termo extra, ausente em mecânica newtoniana, responsável pela precessão do periélio.</div>
+<div class="exercise"><span class="num">4.</span> Confirme que <code>gaussbonnet</code> em de Sitter (seção 13, onde Weyl≡0 e R=12H² constante) se reduz à combinação puramente algébrica R² &minus; 4R<sub>ab</sub>R<sup>ab</sup> — compute R<sub>ab</sub>R<sup>ab</sup> a partir de <code>riccisquare</code> e confira contra o valor de <code>gaussbonnet</code> à mão.</div>
+<div class="exercise"><span class="num">5.</span> Rode <code>riemann [up,down,down,down]</code> em Reissner-Nordström e contraia o resultado sobre o primeiro e terceiro índice à mão, para uma componente de sua escolha; confira contra a saída de <code>ricci</code> direta (seção 5).</div>
+<div class="exercise"><span class="num">6.</span> Escreva um f(r) de sua própria escolha (por exemplo, com um termo extra 1/r³, um parâmetro L a mais) e compute <code>kretschmann</code>; identifique se K diverge em r=0, e se diverge em algum outro raio finito além do horizonte aparente da métrica.</div>
+<div class="exercise"><span class="num">7.</span> Verifique, a partir da saída real de <code>weyl</code> em Reissner-Nordström, que contrair qualquer par de índices com a métrica inversa dá exatamente zero (traço nulo) — a propriedade que de fato distingue Weyl de Riemann, não assumida, conferida.</div>
+<div class="exercise"><span class="num">8.</span> Tente <code>christoffel [up,down,down]</code> você mesmo e escreva, em uma frase, por que a recusa é sobre matemática e não sobre uma limitação do programa — em que ponto exatamente a lei de transformação de Γ (seção 3) deixa de ser a de um tensor.</div>
+<div class="exercise"><span class="num">9.</span> Confirme componente a componente, a partir da saída real de <code>ricci</code> em anti-de Sitter (seção 13), que R<sub>ab</sub> = &minus;3H²g<sub>ab</sub> vale para as quatro componentes independentes, não só para g<sub>tt</sub>.</div>
+<div class="exercise"><span class="num">10.</span> A partir do <code>einstein</code> de FRW (seção 12) e de um tensor de energia-momento de fluido perfeito T<sub>ab</sub> = (ρ+p)u<sub>a</sub>u<sub>b</sub> + pg<sub>ab</sub> (u<sup>a</sup> = (1,0,0,0) na carta comóvel), monte as equações de Einstein componente tt e xx à mão e chegue às duas equações de Friedmann padrão em termos de ρ, p, a(t) e H = ȧ/a.</div>
+
+<!-- 16 -->
+<h2>16. Referências e leituras complementares</h2>
+<ul>
+  <li>R. M. Wald, <em>General Relativity</em>, University of Chicago Press, 1984 — o tratamento mais próximo, em rigor, do que o ODEROM computa: tensores, sem formalismo de formas diferenciais como via principal.</li>
+  <li>C. W. Misner, K. S. Thorne, J. A. Wheeler, <em>Gravitation</em>, Freeman, 1973 — a referência clássica de curso, com os estudos de caso desta apostila (Schwarzschild, Reissner-Nordström, FRW) tratados em profundidade.</li>
+  <li>S. Carroll, <em>Spacetime and Geometry: An Introduction to General Relativity</em>, Addison-Wesley, 2004 — a exposição mais próxima em notação e convenção de sinal (mais-maioria) à usada nesta apostila e no ODEROM.</li>
+  <li>S. W. Hawking, G. F. R. Ellis, <em>The Large Scale Structure of Space-Time</em>, Cambridge University Press, 1973 — para a estrutura causal e a classificação de singularidades mencionada na seção 8.</li>
+  <li>Manual do usuário do ODEROM (<code>docs/ODEROM-manual.html</code>/<code>.pdf</code>, mesmo repositório) — a referência completa da linguagem, do caderno interativo e da linha de comando; esta apostila assume o leitor já ter passado por ele, ou passa a valer a pena depois desta.</li>
+  <li><code>DESIGN-RATIONAL-FORM.md</code>, <code>DESIGN-M2.md</code> (mesmo repositório) — para quem quiser entender como o motor simbólico por trás de cada consulta desta apostila realmente funciona por dentro.</li>
+</ul>
+
+<p style="margin-top:40px; font-size:8.5pt; color:#9a9a95; border-top:1px solid #e4e2da; padding-top:8px;">
+ODEROM &middot; apostila didática. Todo exemplo numérico desta apostila foi executado de verdade contra o motor do ODEROM nesta revisão.
+</p>
+
+</body>
+</html>

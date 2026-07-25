@@ -43,7 +43,14 @@ pub fn rationalize(expr: &Expr) -> (Expr, Expr) {
 
 fn to_fraction(expr: &Expr) -> (Expr, Expr) {
     match expr {
-        Expr::Rational(_) | Expr::Var(_) | Expr::Sin(_) | Expr::Cos(_) => (expr.clone(), Expr::one()),
+        Expr::Rational(_)
+        | Expr::Var(_)
+        | Expr::Sin(_)
+        | Expr::Cos(_)
+        | Expr::Exp(_)
+        | Expr::Sinh(_)
+        | Expr::Cosh(_)
+        | Expr::Func { .. } => (expr.clone(), Expr::one()),
         Expr::Add(terms) => {
             let mut num = Expr::zero();
             let mut den = Expr::one();
@@ -105,12 +112,14 @@ pub fn denominator_degree(e: &Expr) -> i32 {
 /// The standard recursive definition of polynomial degree (a sum's
 /// degree is the max of its terms', a product's is the sum of its
 /// factors', `base^n` is `|n|` times `base`'s), extended to treat
-/// `sin`/`cos` as degree-1 atoms like any variable -- consistent with
-/// [`crate::normalize`] never expanding or relating them by identity.
+/// `sin`/`cos`/`exp`/`sinh`/`cosh` as degree-1 atoms like any variable --
+/// consistent with [`crate::normalize`] never expanding or relating them
+/// by identity (`exp`), or only ever reducing their *own* power, never
+/// their degree as an atom (`sin`/`cos`/`sinh`/`cosh`, D-RF.7).
 fn degree(e: &Expr) -> i32 {
     match e {
         Expr::Rational(_) => 0,
-        Expr::Var(_) | Expr::Sin(_) | Expr::Cos(_) => 1,
+        Expr::Var(_) | Expr::Sin(_) | Expr::Cos(_) | Expr::Exp(_) | Expr::Sinh(_) | Expr::Cosh(_) | Expr::Func { .. } => 1,
         Expr::Add(terms) => terms.iter().map(degree).max().unwrap_or(0),
         Expr::Mul(factors) => factors.iter().map(degree).sum(),
         Expr::Pow(base, n) => n.unsigned_abs() as i32 * degree(base),
@@ -132,13 +141,21 @@ mod tests {
 
     #[test]
     fn combines_two_fractions_with_different_denominators() {
-        // 1/x + 1/y = (x+y)/(xy)
+        // 1/x + 1/y = (x+y)/(xy) -- checked by cross-multiplication
+        // (num*(xy) == den*(x+y)), not by assuming `rationalize()`'s own
+        // sign convention for num/den matches whatever `normalize()`
+        // happens to pick for `x+y`/`xy` directly: `rationalize()` is a
+        // separate, untouched ad hoc tracker, and `normalize()` now
+        // routes through the rational-form engine (DESIGN-RATIONAL-
+        // FORM.md), which picked a different (equally valid) sign
+        // convention here than the two used to coincidentally share.
         let x = Expr::var("x");
         let y = Expr::var("y");
         let e = Expr::Pow(Box::new(x.clone()), -1) + Expr::Pow(Box::new(y.clone()), -1);
         let (num, den) = rationalize(&e);
-        assert_eq!(num, normalize(&(x.clone() + y.clone())));
-        assert_eq!(den, normalize(&(x * y)));
+        let lhs = normalize(&(num.clone() * (x.clone() * y.clone())));
+        let rhs = normalize(&(den.clone() * (x + y)));
+        assert_eq!(lhs, rhs, "num/den = {num:?}/{den:?} does not equal (x+y)/(xy)");
     }
 
     #[test]
@@ -190,7 +207,10 @@ mod tests {
             Expr::Rational(_) | Expr::Var(_) => false,
             Expr::Add(terms) | Expr::Mul(terms) => terms.iter().any(has_negative_exponent),
             Expr::Pow(base, n) => *n < 0 || has_negative_exponent(base),
-            Expr::Sin(inner) | Expr::Cos(inner) => has_negative_exponent(inner),
+            Expr::Sin(inner) | Expr::Cos(inner) | Expr::Exp(inner) | Expr::Sinh(inner) | Expr::Cosh(inner) => {
+                has_negative_exponent(inner)
+            }
+            Expr::Func { args, .. } => args.iter().any(has_negative_exponent),
         }
     }
 }

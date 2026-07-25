@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 20mm 20mm 20mm;
+    @bottom-center {
+      content: counter(page);
+      font-family: "DejaVu Sans", sans-serif;
+      font-size: 9px;
+      color: #9a9a95;
+    }
+  }
+  @page :first { margin: 0; @bottom-center { content: none; } }
+
+  html { font-family: "DejaVu Sans", sans-serif; color: #2C2C2A; font-size: 10.5pt; line-height: 1.5; }
+  body { margin: 0; }
+
+  h1 { font-size: 20pt; color: #534AB7; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.01em; }
+  h2 { font-size: 15pt; color: #2C2C2A; margin: 26px 0 6px 0; padding-bottom: 4px; border-bottom: 2px solid #534AB7; }
+  h3 { font-size: 12pt; color: #3d3673; margin: 18px 0 4px 0; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #f2f1ec; padding: 1px 4px; border-radius: 3px; color: #3d3673; }
+  pre { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #1A1D2B; color: #eceaf5; padding: 12px 14px; border-radius: 6px; line-height: 1.45; overflow-x: auto; }
+  pre code { background: none; color: inherit; padding: 0; }
+
+  .kbd { font-family: "DejaVu Sans Mono", monospace; font-size: 8.5pt; background: #fff; border: 1px solid #cfcdc4; border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; color: #2C2C2A; white-space: nowrap; }
+
+  .cover { height: 297mm; background: #534AB7; color: #fff; display: flex; flex-direction: column; justify-content: center; padding: 0 30mm; box-sizing: border-box; page-break-after: always; }
+  .cover .mark { margin-bottom: 24px; }
+  .cover h1 { color: #fff; font-size: 40pt; letter-spacing: 0.08em; margin: 0; }
+  .cover .acronym { font-size: 11pt; color: #b7b1e8; margin-top: 10px; font-weight: 300; font-style: italic; }
+  .cover .sub { font-size: 14pt; color: #d6d2f2; margin-top: 8px; font-weight: 300; }
+  .cover .meta { font-size: 10pt; color: #b7b1e8; margin-top: 40px; line-height: 1.7; }
+  .cover .author { font-size: 10pt; color: #fff; margin-top: 40px; font-weight: 600; }
+
+  .todo { background: #fdf6e9; border: 1px solid #e8c983; border-left: 4px solid #d99a2b; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
+  .todo .tag { font-size: 8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #a76f10; display: block; margin-bottom: 4px; }
+  .todo p { margin: 4px 0; font-size: 9.5pt; color: #6b5426; }
+  .todo ul { color: #6b5426; font-size: 9.5pt; }
+
+  .note { background: #eef6f2; border-left: 4px solid #1D9E75; border-radius: 4px; padding: 10px 14px; margin: 12px 0; font-size: 9.5pt; }
+  .note strong { color: #14664b; }
+
+  table.ref { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 9.5pt; }
+  table.ref th { background: #534AB7; color: #fff; text-align: left; padding: 6px 10px; font-weight: 600; }
+  table.ref td { border-bottom: 1px solid #e4e2da; padding: 6px 10px; vertical-align: top; }
+  table.ref tr:nth-child(even) td { background: #faf9f6; }
+  /* A row landing right at a page boundary must move to the next page
+     whole, never split with its label cell on one page and its content
+     cells on the other (found rendering this exact manual). */
+  table.ref tr { break-inside: avoid; page-break-inside: avoid; }
+
+  .toc { page-break-after: always; }
+  .toc h2 { border: none; }
+  .toc ol { list-style: none; padding-left: 0; counter-reset: toc; }
+  .toc > ol > li { counter-increment: toc; margin: 7px 0; font-size: 11pt; }
+  .toc > ol > li::before { content: counter(toc) ".  "; color: #534AB7; font-weight: 700; }
+  .toc .status { font-size: 8pt; color: #a76f10; font-weight: 700; margin-left: 8px; }
+  .toc .status.ok { color: #1D9E75; }
+
+  .stripe { display: inline-block; width: 3px; height: 1em; background: #d99a2b; vertical-align: -2px; margin-right: 4px; border-radius: 1px; }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="mark">
+    <svg viewBox="6.5 0 100 100" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+      <path d="M78.07 41.06A32 32 0 1 1 58.94 21.93" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+      <path d="M78.07 41.06L88.64 30.36" fill="none" stroke="#5DCAA5" stroke-width="6.5" stroke-linecap="round"/>
+      <path d="M95 24L92.5 34.2L84.7 26.5Z" fill="#5DCAA5"/>
+    </svg>
+  </div>
+  <h1>ODEROM</h1>
+  <div class="acronym">Oriented Differential Exterior calculus for Relativity, Operators and Manifolds</div>
+  <div class="sub">Manual do usuário &middot; caderno de cálculo tensorial</div>
+  <div class="author">Rafael Camargo Rodrigues de Lima</div>
+  <div class="meta">
+    Etapa 3 (caderno) concluída &middot; todos os capítulos verificados contra o código-fonte
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <h2>Sumário</h2>
+  <ol>
+    <li>Sobre este manual e o ODEROM <span class="status ok">completo</span></li>
+    <li>Instalação e primeira execução <span class="status ok">completo</span></li>
+    <li>Anatomia do caderno <span class="status ok">completo</span></li>
+    <li>Executando blocos: o modelo de teclado <span class="status ok">completo</span></li>
+    <li>Estados de um bloco <span class="status ok">completo</span></li>
+    <li>Execução única e cancelamento <span class="status ok">completo</span></li>
+    <li>Criar, editar e apagar blocos <span class="status ok">completo</span></li>
+    <li>Salvar e abrir: o formato <code>%%</code> <span class="status ok">completo</span></li>
+    <li>A linguagem ODEROM <span class="status ok">completo</span></li>
+    <li>Exemplos completos <span class="status ok">completo</span></li>
+    <li>Uso pela linha de comando <span class="status ok">completo</span></li>
+    <li>Referência rápida <span class="status ok">completo</span></li>
+    <li>A galeria de espaços-tempo <span class="status ok">completo</span></li>
+  </ol>
+</div>
+
+<!-- 1 -->
+<h2>1. Sobre este manual e o ODEROM</h2>
+<p>O ODEROM é um aplicativo de mesa para cálculo simbólico em geometria diferencial. A partir da definição de uma variedade, uma carta de coordenadas e uma métrica, ele computa objetos de curvatura — símbolos de Christoffel, tensores de Riemann e Ricci, escalares invariantes como o de Kretschmann — em forma fechada, sem avaliação numérica. A interface principal é um <em>caderno</em>: blocos de código empilhados que o usuário edita e executa individualmente, com a saída matemática tipografada logo abaixo de cada bloco.</p>
+<p>Este documento cobre o caderno e seu modelo de interação, a instalação, o formato de arquivo, a gramática completa da linguagem, quatro exemplos executados de ponta a ponta e o uso pela linha de comando.</p>
+<div class="note">
+  <strong>Como este manual foi verificado.</strong> A gramática, a lista de consultas, as mensagens de erro e os quatro exemplos do capítulo 10 vêm do parser real (<code>oderom-cli::parser</code>/<code>expr_parser</code>), de arquivos <code>.od</code> já existentes no repositório, ou de arquivos escritos para esta revisão e efetivamente executados pelo binário <code>oderom</code> ou pelo <code>oderom-repl</code> — nunca de memória. Onde algo não pôde ser verificado desse jeito (por exemplo, pré-requisitos de build em macOS/Windows, que este repositório não exercita em CI), o texto diz isso explicitamente em vez de supor.
+</div>
+
+<!-- 2 -->
+<h2>2. Instalação e primeira execução</h2>
+<p>O ODEROM é um workspace Cargo multi-crate; o aplicativo de caderno (<code>oderom-app</code>) é um shell Tauri 2 sobre um front-end estático — sem Node.js, sem <code>npm</code>, sem passo de build de JavaScript. <code>tauri.conf.json</code> não declara <code>devUrl</code> nem <code>beforeBuildCommand</code>: <code>build.frontendDist</code> aponta direto para <code>oderom-app/dist/</code>, e CodeMirror 5 e KaTeX estão vendorizados ali como arquivos (não CDN, não dependência npm) — a janela abre sem acesso à rede.</p>
+
+<h3>Pré-requisitos</h3>
+<ul>
+  <li><strong>Toolchain Rust estável</strong> (edição 2021, <code>Cargo.toml</code> do workspace). Nenhuma versão mínima é fixada em <code>rust-toolchain.toml</code> — qualquer <code>stable</code> recente serve.</li>
+  <li><strong>Linux</strong> — bibliotecas de sistema do WebKitGTK, confirmadas contra o próprio pipeline de CI deste projeto (<code>.github/workflows/ci.yml</code>, variável <code>TAURI_APT_DEPS</code>), não de documentação genérica do Tauri:
+    <pre><code>sudo apt-get install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev</code></pre>
+  </li>
+  <li><strong>macOS/Windows</strong> — este repositório não roda CI nessas plataformas (o workflow só tem jobs <code>ubuntu-latest</code>), então não há prerequisito verificado por este projeto para citar aqui. Valem os requisitos padrão de qualquer aplicativo Tauri 2 (Xcode Command Line Tools no macOS; WebView2 Runtime e as ferramentas de build do MSVC no Windows) — não confirmados contra este repositório especificamente.</li>
+  <li><strong>Não é preciso Node.js</strong> em nenhuma plataforma — ver acima.</li>
+</ul>
+
+<h3>Fluxo de desenvolvimento (verificado)</h3>
+<p>O comando real, executado e confirmado nesta revisão:</p>
+<pre><code>cargo build -p oderom-app
+./target/debug/oderom-app</code></pre>
+<p>Produz um binário executável chamado <code>oderom-app</code> em <code>target/debug/</code> (ou <code>target/release/</code> com <code>--release</code>) — sem instalador, sem empacotamento, a janela abre diretamente. É o mesmo fluxo que <code>cargo tauri dev</code> executaria (não há <code>beforeDevCommand</code>/<code>devUrl</code> configurados, então não existe um segundo processo de front-end para orquestrar).</p>
+
+<h3>Empacotamento distribuível (Linux) — verificado ao vivo</h3>
+<p>Desde esta revisão, <code>cargo tauri build</code> empacota de verdade: o único obstáculo real era o <code>identifier</code> em <code>oderom-app/src-tauri/tauri.conf.json</code>, que ainda era o valor-modelo do próprio Tauri (<code>com.tauri.dev</code>, recusado por não ser único). Trocado para <code>com.oderom.notebook</code> — reverse-DNS, evita de propósito terminar em <code>.app</code> (o próprio <code>tauri-cli</code> avisa que esse sufixo colide com a extensão de bundle do macOS, um problema que só apareceria numa rodada futura de empacotamento para lá, mas que não custa nada evitar agora) — os três alvos Linux que o <code>tauri-cli</code> reconhece (<code>deb</code>, <code>rpm</code>, <code>appimage</code>) empacotam sem mais nenhuma mudança:</p>
+<pre><code>cargo tauri build -b deb
+cargo tauri build -b rpm
+cargo tauri build -b appimage</code></pre>
+<p>Nenhum dos três introduz dependência de Node.js/<code>npm</code> — o passo de bundling é inteiramente nativo (compilação Rust normal, mais ferramentas nativas de empacotamento Linux; a primeira build de <code>.AppImage</code> baixa um runtime binário do GitHub uma única vez, não um passo de front-end). Metadados do pacote (nome de exibição, categoria, descrição, licença), até esta revisão ausentes ou herdados de valores internos do <code>Cargo.toml</code>, foram preenchidos explicitamente em <code>tauri.conf.json</code>:</p>
+<table class="ref">
+<tr><th>Campo</th><th>Valor</th></tr>
+<tr><td><code>identifier</code></td><td><code>com.oderom.notebook</code></td></tr>
+<tr><td><code>productName</code></td><td><code>ODEROM</code></td></tr>
+<tr><td><code>bundle.category</code></td><td><code>Education</code> (o enum do Tauri não tem uma categoria "Science" dedicada)</td></tr>
+<tr><td><code>bundle.shortDescription</code></td><td>Symbolic differential geometry notebook for general relativity</td></tr>
+<tr><td><code>bundle.license</code></td><td><code>MIT OR Apache-2.0</code> (mesma licença do workspace Cargo — o bundler não herda esse campo do <code>Cargo.toml</code> automaticamente, precisou ser declarado à parte)</td></tr>
+<tr><td>Maintainer/publisher (<code>.deb</code>)</td><td>Não fixado — cai no próprio padrão do Tauri (o segundo elemento do <code>identifier</code>, <code>oderom</code>), já que <code>Cargo.toml</code> não declara <code>authors</code>. Decisão consciente desta revisão, revisável depois.</td></tr>
+</table>
+<p><strong>Instalando a partir do pacote (o caminho do usuário final, sem Rust instalado):</strong></p>
+<pre><code># .deb (Debian/Ubuntu e derivados)
+sudo apt install ./ODEROM_0.1.0_amd64.deb
+# ou, sem resolver dependências automaticamente:
+sudo dpkg -i ODEROM_0.1.0_amd64.deb
+
+# .AppImage (qualquer distribuição Linux moderna, sem instalar nada)
+chmod +x ODEROM_0.1.0_amd64.AppImage
+./ODEROM_0.1.0_amd64.AppImage
+
+# .rpm (Fedora/openSUSE e derivados)
+sudo rpm -i ODEROM-0.1.0-1.x86_64.rpm</code></pre>
+<p>O <code>.deb</code>/<code>.rpm</code> instalam um binário do sistema mais um atalho de menu (<code>.desktop</code>), e dependem de <code>libwebkit2gtk-4.1-0</code>/<code>libgtk-3-0</code> já estarem presentes (declarado como <code>Depends</code> no <code>.deb</code>). O <code>.AppImage</code> não instala nada — é um único arquivo executável autocontido (~77 MB, contra ~4 MB do <code>.deb</code>/<code>.rpm</code>, porque empacota o runtime GTK/WebKit inteiro junto) — e foi o caminho usado para verificar esta revisão: copiado para um diretório fora da árvore do projeto, executado com <code>PATH</code> reduzido a <code>/usr/bin:/bin</code> (sem <code>cargo</code>/<code>rustc</code>) e uma <code>$HOME</code> descartável, abriu normalmente — o mesmo caderno com o exemplo de Reissner-Nordström carregado, título "ODEROM" na janela, sem nenhuma saída de erro.</p>
+<p><strong>Assinatura de código:</strong> nenhum dos três pacotes é assinado, e isso não bloqueia nada no Linux — <code>.deb</code>/<code>.rpm</code>/<code>.AppImage</code> não assinados instalam e abrem normalmente. Fica pendente, conhecido, para quando houver uma rodada de empacotamento macOS/Windows: sem assinatura, o Gatekeeper do macOS e o SmartScreen do Windows avisam ou bloqueiam a abertura — não resolvido aqui, só registrado.</p>
+<p><strong>macOS/Windows:</strong> não tentados nesta revisão — o próprio pipeline de CI deste projeto só roda <code>ubuntu-latest</code> (<code>.github/workflows/ci.yml</code>), então não há como validar um empacotamento para essas plataformas a partir daqui; <code>cargo tauri build</code> para <code>.dmg</code>/<code>.app</code> ou <code>.msi</code>/<code>.nsis</code> precisa rodar de verdade num host macOS/Windows (nativo ou um runner de CI correspondente), não é algo que cross-compile de um Linux resolva. Além da assinatura de código (parágrafo acima), nada mais foi investigado para essas duas plataformas nesta revisão.</p>
+
+<h3>Ícones</h3>
+<p><code>oderom-app/src-tauri/icons/</code> guarda os arquivos rasterizados (<code>icon-32/128/256/512.png</code>, <code>icon.icns</code>, <code>icon.ico</code>), referenciados por <code>tauri.conf.json</code>'s <code>bundle.icon</code> e gerados a partir de <code>assets/icon-launcher-1024.svg</code> (ver <code>assets/README.md</code>).</p>
+
+<h3>Primeira abertura (verificado ao vivo)</h3>
+<p>A janela abre com o título "ODEROM", cabeçalho escuro com o símbolo da marca, e o caderno já carregado com o exemplo de Reissner-Nordström embutido em <code>seed_example()</code> (<code>oderom-app/src-tauri/src/lib.rs</code>) — quatro blocos, todos <em>não executados</em> (<code>[ ]</code> na medianiz), o primeiro já com foco:</p>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+%%
+chart schw on M coords (t, r, theta, phi)
+%%
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r + Q^2/r^2),
+  [r,r] = 1/(1 - 2*M/r + Q^2/r^2),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}
+%%
+kretschmann</code></pre>
+<p>A barra de status mostra "pronto · 4 blocos · 0 executados". Nada é calculado até uma tecla de execução ser usada — mesmo no primeiro bloco já focado.</p>
+
+<!-- 3 -->
+<h2>3. Anatomia do caderno</h2>
+<p>O caderno é uma pilha vertical de blocos. Cada bloco tem três partes:</p>
+<ul>
+  <li><strong>A medianiz (gutter), à esquerda</strong>, com um indicador de execução entre colchetes. <code>[ ]</code> vazio significa nunca executado; <code>[n]</code> com um número significa que aquele foi o <em>n</em>-ésimo bloco executado na sessão. A numeração reflete a ordem real de execução, não a posição do bloco na página.</li>
+  <li><strong>O editor</strong>, onde se digita o código. Há realce de sintaxe para a gramática do ODEROM.</li>
+  <li><strong>A saída</strong>, que aparece abaixo do editor depois da execução, tipografada matematicamente. Resultados em forma de expressão saem como matemática; algumas saídas combinam matemática com uma linha de resumo textual.</li>
+</ul>
+<p>Ao final da pilha há sempre um bloco vazio com borda tracejada. Ele é um alvo permanente para começar a digitar e um lembrete do atalho de execução; não é um bloco "real" até receber conteúdo.</p>
+<p>No alto da janela ficam o campo de caminho de arquivo, os botões de salvar e abrir, o botão <strong>Galeria</strong> (capítulo 13), que abre um painel para carregar uma métrica conhecida, e, separados por uma divisória, dois controles para voltar o caderno a um estado limpo: <strong>Limpar execução</strong> e <strong>Novo caderno</strong> (ver abaixo). No rodapé há uma barra de status que reflete o estado do caderno em tempo real — inclusive se algum bloco está em execução.</p>
+<div class="note">
+  <strong>Nada recalcula sozinho.</strong> Este é o princípio central do caderno. Abrir um arquivo nunca executa nada; todos os blocos vêm não executados. Nenhuma edição, nenhuma navegação e nenhuma ação de interface dispara cálculo. Só as teclas de execução, acionadas deliberadamente pelo usuário, executam um bloco — e apenas aquele bloco. Os dois botões de reset descritos a seguir seguem a mesma regra: nenhum dos dois executa nada.
+</div>
+
+<h3>Limpar execução e Novo caderno: dois jeitos de recomeçar, dois riscos diferentes</h3>
+<p>Os dois controles ao lado do botão Galeria levam o caderno a um estado limpo, mas não são a mesma coisa — cada um existe para um risco diferente, por isso são botões separados e visualmente distintos (o segundo em vermelho), nunca um único controle com opções.</p>
+<table class="ref">
+<tr><th>Botão</th><th>O que faz</th><th>O que preserva</th><th>Pede confirmação?</th></tr>
+<tr><td><strong>Limpar execução</strong></td><td>Volta todos os blocos a não-executados (<code>[ ]</code>) e descarta todo o estado de sessão: cache de cálculo, apelidos declarados, contador de execução (a próxima execução volta a ser <code>[1]</code>), marcas de obsolescência, toda saída exibida.</td><td>O texto de cada bloco, intacto.</td><td><strong>Não</strong> — reversível: basta executar de novo para reobter qualquer resultado.</td></tr>
+<tr><td><strong>Novo caderno</strong></td><td>Apaga todos os blocos e começa vazio (um único bloco em branco, como um caderno recém-criado), limpando também todo o estado de sessão junto.</td><td>Nada do conteúdo anterior.</td><td><strong>Sim</strong> — destrutivo: o texto apagado não pode ser recuperado.</td></tr>
+</table>
+<p><strong>Limpar execução</strong> é o análogo do "reiniciar o kernel": o estado depois de clicar é indistinguível do estado de abrir aquele mesmo texto como um arquivo novo — mesmo texto, nenhuma execução, nenhuma memória de sessão. Por ser inteiramente reversível (o texto nunca se perde), não pede confirmação — pedir seria fricção sem propósito, já que não há nada a proteger.</p>
+<p><strong>Novo caderno</strong> apaga texto que o usuário escreveu, então pede confirmação — um painel simples (não um diálogo modal bloqueante) explica exatamente o que se perde antes de qualquer coisa acontecer. Só um clique explícito no botão vermelho de confirmação executa a ação; fechar o painel de qualquer outra forma (Escape, clicar fora, o botão Cancelar) cancela sem tocar em nada.</p>
+<div class="note">
+  <strong>Nenhum dos dois toca em arquivo.</strong> Se o caderno atual veio de um arquivo aberto ou salvo, nem <strong>Limpar execução</strong> nem <strong>Novo caderno</strong> mexem nesse arquivo em disco — os dois agem só no que está na tela. Depois de "Novo caderno", o arquivo original continua exatamente onde estava, pronto para ser reaberto (capítulo 8) se o caderno em branco não for o que se queria.
+</div>
+
+<!-- 4 -->
+<h2>4. Executando blocos: o modelo de teclado</h2>
+<p>O ODEROM segue o modelo do Jupyter, não o do Mathematica. Há três teclas de execução, e a diferença entre elas está no que acontece com o foco depois:</p>
+<table class="ref">
+  <tr><th>Tecla</th><th>O que faz</th></tr>
+  <tr><td><span class="kbd">Shift</span> + <span class="kbd">Enter</span></td><td>Executa o bloco atual e move o foco para o bloco seguinte. Se o bloco atual for o último, cria um bloco novo vazio abaixo e move o foco para ele.</td></tr>
+  <tr><td><span class="kbd">Ctrl</span> + <span class="kbd">Enter</span></td><td>Executa o bloco atual e mantém o foco nele. Não cria nada. É o atalho para iterar no mesmo bloco.</td></tr>
+  <tr><td><span class="kbd">Alt</span> + <span class="kbd">Enter</span></td><td>Executa o bloco atual e insere um bloco novo vazio logo abaixo, mesmo que já exista um bloco depois, movendo o foco para o novo.</td></tr>
+</table>
+<p>Mover o foco <em>não</em> executa. O bloco de destino fica focado e continua não executado — nunca há execução em cadeia. Cada execução é um gesto separado.</p>
+<p>Ao abrir o caderno, o primeiro bloco recebe foco automaticamente, de modo que as teclas funcionam sem precisar clicar primeiro dentro do editor.</p>
+
+<!-- 5 -->
+<h2>5. Estados de um bloco</h2>
+<p>A medianiz e a aparência do bloco distinguem cinco estados:</p>
+<table class="ref">
+  <tr><th>Estado</th><th>Indicador</th><th>Significado</th></tr>
+  <tr><td>Nunca executado</td><td><code>[ ]</code></td><td>O bloco ainda não foi rodado. É o estado de todo bloco ao abrir o caderno.</td></tr>
+  <tr><td>Executado e atual</td><td><code>[n]</code></td><td>Foi executado e seu resultado corresponde ao código atual.</td></tr>
+  <tr><td>Executado e obsoleto</td><td><span class="stripe"></span><code>[n]</code> âmbar + <code>&#8635;</code></td><td>Foi executado, mas o código mudou desde então (ou um bloco acima mudou). O resultado antigo continua visível, marcado como desatualizado.</td></tr>
+  <tr><td>Em execução</td><td>—</td><td>O cálculo está em andamento. O bloco oferece a opção de cancelar.</td></tr>
+  <tr><td>Cancelado</td><td>—</td><td>A execução foi interrompida pelo usuário. Se havia um resultado anterior, ele permanece na tela como obsoleto.</td></tr>
+</table>
+
+<h3>Obsolescência</h3>
+<p>Quando um bloco já executado tem seu código editado, ele passa a <em>obsoleto</em>: o resultado na tela foi calculado a partir de um texto que não existe mais. Além do próprio bloco, todos os blocos executados <em>abaixo</em> dele também ficam obsoletos, porque podem depender do que mudou.</p>
+<p>A marca de obsolescência é puramente informativa — ela nunca recalcula nem apaga nada. O resultado antigo continua legível; ele só passa a ser exibido como antigo. A distinção usa cor âmbar (nunca vermelho, que é reservado para erro), mais sinais não cromáticos — uma tarja lateral e um glifo <code>&#8635;</code> na medianiz, mais um rótulo textual acima da saída — de modo a ser legível independentemente de percepção de cor.</p>
+<p>A marca some quando o bloco é executado de novo (só ele; os blocos abaixo continuam marcados até serem executados individualmente), ou quando a edição é desfeita e o texto volta a ser exatamente o que era no momento da execução.</p>
+
+<!-- 6 -->
+<h2>6. Execução única e cancelamento</h2>
+<p>O caderno executa <strong>um bloco de cada vez</strong>. Enquanto uma execução está em andamento, as teclas de execução em qualquer outro bloco são recusadas — não iniciam um segundo cálculo. Essa recusa é sempre sinalizada: um realce momentâneo aparece na barra de status e no bloco que está ocupando a execução, indicando quem está bloqueando. A recusa nunca é silenciosa e nunca usa diálogo modal.</p>
+<p>A exclusão vale para qualquer combinação — uma consulta não começa enquanto outra roda, e uma definição também não. O bloco recusado não muda de estado nem perde o resultado anterior.</p>
+<p>Uma execução em andamento pode ser <strong>cancelada</strong>. O cálculo realmente para. O bloco cancelado recebe o estado de cancelado — não volta a parecer nunca executado, porque houve uma tentativa. Se o bloco já tinha um resultado de execução anterior, esse resultado continua na tela, marcado como obsoleto.</p>
+<p>Enquanto um bloco roda, a interface permanece responsiva: os demais blocos aceitam foco e edição normalmente. Bloquear a <em>execução</em> não bloqueia a <em>edição</em>.</p>
+<div class="note">
+  <strong>Como sair de um bloqueio.</strong> Se você tentar rodar um bloco e a execução for recusada, há duas saídas: esperar o bloco em andamento terminar, ou cancelá-lo. Assim que a execução em curso termina ou é cancelada, o próximo bloco pode ser executado normalmente.
+</div>
+
+<!-- 7 -->
+<h2>7. Criar, editar e apagar blocos</h2>
+<p>Cada bloco traz, no canto superior direito, um único controle: apagá-lo — o mesmo espaço vira o botão de cancelar enquanto o bloco está em execução (capítulo 6). Não existe um botão dedicado para inserir um bloco novo em qualquer ponto: isso só acontece como efeito das teclas de execução — <span class="kbd">Shift</span>+<span class="kbd">Enter</span> no último bloco, ou <span class="kbd">Alt</span>+<span class="kbd">Enter</span> em qualquer bloco (capítulo 4). Editar é direto: o texto é um editor de código comum, com realce. Blocos não podem ser reordenados — a ordem de criação é a única forma de decidir a posição na v1.</p>
+<p>Inserir ou apagar um bloco marca como obsoletos os blocos executados abaixo do ponto alterado, pela mesma lógica do capítulo 5 — a estrutura mudou, então o que vinha depois pode não corresponder mais.</p>
+
+<!-- 8 -->
+<h2>8. Salvar e abrir: o formato <code>%%</code></h2>
+<p>Cadernos são salvos e abertos em um formato de texto que separa os blocos por um marcador <code>%%</code>. O campo de caminho no alto da janela, com os botões salvar e abrir, controla isso. Um caderno reaberto volta com todos os blocos <em>não executados</em> — coerente com "nada recalcula sozinho": abrir um arquivo nunca dispara cálculo.</p>
+<p>A forma exata (<code>oderom-notebook/src/persist.rs</code>): <code>%%</code> delimita blocos como <strong>uma linha cujo conteúdo, depois de remover um <code>\r</code> final, é exatamente <code>%%</code></strong> — não um prefixo, não aceita rótulo nem metadado ao lado. N blocos precisam de exatamente N&minus;1 linhas delimitadoras; o primeiro bloco não tem delimitador antes dele. Seguro porque comentário de <code>.od</code> é <code>#</code>, nunca <code>%%</code> — mas se o próprio texto de um bloco contiver uma linha que já seja exatamente <code>%%</code>, salvar é <strong>recusado</strong> com erro (não corrompe o arquivo escrevendo mesmo assim).</p>
+<p><strong>O tipo do bloco nunca é gravado.</strong> Só o texto-fonte de cada bloco é salvo — nunca a saída, nunca se é declaração ou consulta. Ao reabrir, cada bloco começa como se tivesse acabado de ser criado (nunca executado), e seu tipo é redescoberto do zero por <code>classify_block</code> a partir do próprio texto — nunca pode ficar dessincronizado do conteúdo real, porque nunca é guardado separadamente dele.</p>
+<p>Exemplo real, gerado pela própria função de serialização (<code>persist::render</code>) a partir de um caderno de quatro blocos — não reconstruído à mão:</p>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+%%
+chart schw on M coords (t, r, theta, phi)
+%%
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r),
+  [r,r] = 1/(1 - 2*M/r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}
+%%
+kretschmann</code></pre>
+<p><strong>Extensão de arquivo:</strong> o campo de caminho do aplicativo mostra o placeholder <code>caminho/arquivo.odn</code> (<code>oderom-app/dist/index.html</code>) — <code>.odn</code> é a convenção sugerida para um caderno salvo. Isso é só uma dica de interface, não uma validação: <code>save_notebook</code>/<code>open_notebook</code> (o comando Tauri) aceitam qualquer caminho, sem checar a extensão. Um arquivo <code>.od</code> "puro", do tipo que a linha de comando consome (capítulo 11) — sem nenhuma linha <code>%%</code> — não é o mesmo uso: ele não tem conceito de bloco nenhum, é uma sequência contínua de declarações lida de uma vez por <code>parse_model</code>. Se aberto no caderno, um arquivo assim vira <strong>um único bloco</strong> com todo o conteúdo junto (<code>parse_sources</code> devolve um vetor de um elemento quando não encontra nenhum delimitador) — não um bloco por declaração.</p>
+
+<!-- 9 -->
+<h2>9. A linguagem ODEROM</h2>
+<p>Um bloco de caderno (ou um arquivo <code>.od</code>) contém uma sequência de <strong>declarações</strong> e <strong>consultas</strong>. O próprio parser decide qual é qual olhando só a primeira palavra do bloco (<code>classify_block</code>, <code>oderom-cli/src/parser.rs</code>) — seis palavras-chave de declaração e doze de consulta, dois conjuntos disjuntos, sem ambiguidade:</p>
+<pre><code>manifold  bundle  head  chart  metric  connection                       (declaração)
+christoffel  riemann  ricci  scalar  kretschmann  geodesic  accel        (consulta)
+einstein  riccisquare  gaussbonnet  weyl  weylsquare                     (consulta)</code></pre>
+<p>Qualquer outra palavra inicial é um erro explícito, nunca uma adivinhação silenciosa.</p>
+
+<h3>9.1 Variedade, fibrado e carta</h3>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)</code></pre>
+<p><code>manifold NOME dim N</code> declara uma variedade de dimensão <code>N</code>. <code>bundle NOME on VARIEDADE dim N</code> declara um fibrado sobre uma variedade já declarada — <code>dim</code> aqui é a dimensão da fibra, não precisa coincidir com a da variedade em geral, embora para o fibrado tangente (o único usado nos exemplos deste manual) sempre coincida. <code>chart NOME on VARIEDADE coords (c1, c2, ...)</code> declara uma carta de coordenadas; o número de nomes de coordenada tem que bater exatamente com a dimensão da variedade — <code>chart c on M coords (x, y)</code> contra uma <code>manifold M dim 3</code> é rejeitado com <code>chart `c` has 2 coordinates, but manifold `M` has dimension 3</code> (mensagem real, capturada rodando o parser).</p>
+
+<h3>9.2 Métrica e conexão</h3>
+<pre><code>metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r + Q^2/r^2),
+  [r,r] = 1/(1 - 2*M/r + Q^2/r^2),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p><code>metric NOME on CARTA bundle FIBRADO { LINHA, LINHA, ... }</code>. <code>bundle</code> aqui nomeia qual fibrado já declarado carrega os índices do tensor métrico — a métrica declara, por conta própria, uma cabeça abstrata (Marco 1) de posto 2, simétrica, com os dois índices covariantes; isso acontece automaticamente, nunca é escrito à mão. Cada <code>LINHA</code> dentro de <code>{ }</code> é <code>[i,j] = EXPR</code>, separadas por vírgula, sem vírgula depois da última. Os índices entre colchetes são nomes de coordenada da carta referenciada (ou um inteiro literal). A forma alternativa em LaTeX usa subscrito em vez de colchetes, ecoando o próprio nome da declaração: <code>g_{tt} = ...</code> (ver 9.4) — as duas formas produzem a árvore idêntica; verificado comparando a saída de <code>kretschmann</code> rodada contra a mesma métrica escrita das duas formas (<code>schwarzschild_ascii.od</code> e <code>schwarzschild_latex.od</code>, <code>oderom-cli/tests/fixtures/</code>).</p>
+<pre><code>connection Gamma on flat2 {
+  [x,y,y] = x
+}</code></pre>
+<p><code>connection NOME on CARTA { LINHA, ... }</code> — mesma estrutura de bloco, mas declara diretamente os símbolos de Christoffel (posto 3), sem passar por uma métrica: Christoffel não é um tensor, então não há cabeça, não há simetria declarada, é armazenado como uma grade crua. Uma conexão dispensa <code>bundle</code> por completo. É a porta de entrada alternativa para <code>christoffel</code>/<code>riemann</code>/<code>ricci</code> sem nunca declarar uma métrica — mas <code>scalar</code>/<code>kretschmann</code>, que precisam inverter uma métrica para subir índice, recusam com erro nesse caso (ver 9.5 e capítulo 10, exemplo 4).</p>
+
+<h3>9.3 <code>head</code> (construção abstrata, Marco 1)</h3>
+<pre><code>head R : TM*, TM*, TM*, TM* symmetry (1 2)- (3 4)- (1 3)(2 4)+
+head eps : TM*, TM*, TM* symmetry antisymmetric</code></pre>
+<p><code>head NOME : SLOT, SLOT, ... [symmetry GERADOR ...]</code> declara uma cabeça tensorial abstrata contra um fibrado, sem componentes concretas — o nível de <code>oderom canon</code> (capítulo 11), não das cinco consultas de curvatura. Cada <code>SLOT</code> é o nome de um fibrado, sozinho (contravariante) ou seguido de <code>*</code> (covariante). <code>symmetry</code> aceita <code>antisymmetric</code>, <code>symmetric</code>, ou uma lista de geradores explícitos — cada um uma sequência de ciclos entre parênteses (índices de posição, 1-based) seguida de <code>+</code> ou <code>-</code> para o sinal. <code>metric</code>/<code>connection</code> nunca precisam de <code>head</code> escrito à mão — já declaram a sua própria.</p>
+
+<h3>9.4 Expressões escalares</h3>
+<p>A gramática de expressão (<code>SCALAR_EXPR</code>, <code>oderom-cli/src/expr_parser.rs</code>) é uma só, com duas grafias de token em todo ponto que tem equivalente em LaTeX — nunca dois parsers:</p>
+<table class="ref">
+<tr><th>Forma</th><th>ASCII</th><th>LaTeX</th></tr>
+<tr><td>soma, subtração</td><td><code>a + b</code>, <code>a - b</code></td><td>iguais</td></tr>
+<tr><td>produto</td><td><code>a * b</code> ou justaposição (<code>2M</code>)</td><td>justaposição</td></tr>
+<tr><td>divisão</td><td><code>a / b</code></td><td><code>\frac{a}{b}</code></td></tr>
+<tr><td>potência (expoente inteiro, só)</td><td><code>a^n</code>, <code>a^-n</code>, <code>a^{-n}</code></td><td><code>a^{n}</code></td></tr>
+<tr><td>agrupamento</td><td><code>( ... )</code></td><td><code>( ... )</code> ou <code>\left( ... \right)</code></td></tr>
+<tr><td>seno, cosseno</td><td><code>sin(x)</code>, <code>cos(x)</code></td><td><code>\sin(x)</code>, <code>\sin^2(x)</code>, <code>\sin{x}</code>, <code>\cos(...)</code></td></tr>
+<tr><td>exponencial</td><td><code>exp(x)</code></td><td><code>\exp(x)</code></td></tr>
+<tr><td>seno e cosseno hiperbólicos</td><td><code>sinh(x)</code>, <code>cosh(x)</code></td><td><code>\sinh(x)</code>, <code>\cosh^2(x)</code>, ...</td></tr>
+<tr><td>letra grega</td><td>identificador literal (<code>theta</code>)</td><td><code>\theta</code>, <code>\phi</code>, ...</td></tr>
+</table>
+<p><code>sin</code>/<code>cos</code>/<code>exp</code>/<code>sinh</code>/<code>cosh</code> são as únicas funções <em>conhecidas</em> — com valor e derivada já definidos pelo motor. A forma <code>NOME(...)</code> é sempre sintaticamente reservada para chamada de função (nunca lida como justaposição); um nome fora dessa lista de cinco é uma de duas coisas, nunca um erro genérico: se for um nome sem significado matemático padrão (<code>f</code>, <code>g</code>, <code>h</code>, ...), é uma <strong>função indeterminada</strong> (seção 9.10) — um símbolo opaco, aceito e representável, mas sem valor nem derivada conhecidos a priori; se for uma função elementar conhecida ainda não implementada como chamável (<code>tan</code>, <code>sqrt</code>, uma trigonométrica inversa, ...), é rejeitado explicitamente — nunca aceito como se fosse indeterminado (seção 9.10 tem a lista completa e o porquê). O expoente de <code>^</code> é sempre um inteiro literal (positivo ou negativo) — nunca uma subexpressão.</p>
+<p><code>exp</code> é sua própria derivada; <code>sinh</code>/<code>cosh</code> derivam um no outro, sem troca de sinal (ao contrário de <code>sin</code>/<code>cos</code>). <code>sinh</code>/<code>cosh</code> satisfazem a identidade cruzada <code>cosh(x)² − sinh(x)² = 1</code> — a mesma simplificação que <code>sin</code>/<code>cos</code> já fazem com <code>sin(x)²+cos(x)²=1</code>, sinal trocado — verificado ao vivo: a métrica do plano hiperbólico do capítulo 10 só reduz a um escalar de Ricci constante (<code>−2</code>) por causa dessa identidade. <code>exp</code> não ganhou a identidade <code>exp(a)·exp(b) = exp(a+b)</code>: nenhum caso de uso real deste projeto precisa dela (potências inteiras do mesmo <code>exp(...)</code> já se combinam sozinhas, sem identidade nenhuma), e ela exigiria mesclar dois átomos diferentes em vez de só reduzir a potência de um — uma peça de maquinaria nova, não uma extensão pequena do que já existe.</p>
+
+<h3>9.5 Consultas</h3>
+<p><code>QUERY := NOME_DA_CONSULTA IDENTIFICADOR? MARCADOR_DE_VARIANCIA?</code> — a palavra-chave sozinha, ou seguida do nome de uma métrica/conexão declarada, para desambiguar quando há mais de uma (<code>kretschmann g</code>), e opcionalmente um marcador de variância de índice entre colchetes por último (<code>riemann g [up,down,down,down]</code> — seção 9.16, sua própria sintaxe/regras). Sem o identificador, a mesma regra de <code>resolve_choice</code> vale: se há exatamente uma métrica (ou conexão, na ausência de métrica), ela é usada; mais de uma sem desambiguar é erro. <code>geodesic</code>/<code>accel</code> (seções 9.11/9.12) são as duas exceções a essa gramática — cada uma exige um segundo identificador, sempre por último, o nome do parâmetro afim, e nenhuma das duas aceita marcador de variância (produzem equações, não objetos tensoriais indexados). As doze, com o que cada uma retorna — verificado rodando cada uma contra <code>schwarzschild_ascii.od</code>, <code>reissner_nordstrom.od</code>, <code>hyperbolic_plane.od</code> e <code>connection_only.od</code> (capítulo 10, exemplos 4&ndash;8):</p>
+<table class="ref">
+<tr><th>Consulta</th><th>Retorna</th><th>Funciona a partir de <code>connection</code> sem métrica?</th></tr>
+<tr><td><code>christoffel</code></td><td>Os símbolos de Christoffel Γ<sup>a</sup><sub>bc</sub> (rótulo <code>Gamma</code>).</td><td>Sim.</td></tr>
+<tr><td><code>riemann</code></td><td>O tensor de Riemann. A partir de uma métrica, totalmente covariante, R<sub>abcd</sub> (o primeiro índice é baixado); a partir de uma conexão pura, na forma mista R<sup>a</sup><sub>bcd</sub>, já que não há métrica para baixar índice. Rótulo <code>R</code> nos dois casos.</td><td>Sim (na forma mista).</td></tr>
+<tr><td><code>ricci</code></td><td>O tensor de Ricci R<sub>bd</sub> = R<sup>a</sup><sub>bad</sub> (rótulo <code>Ricci</code>) — a contração não precisa inverter a métrica.</td><td>Sim.</td></tr>
+<tr><td><code>scalar</code></td><td>O escalar de Ricci R = g<sup>bd</sup>R<sub>bd</sub> — um número/expressão só, sem rótulo.</td><td><strong>Não</strong> — erro <code>`scalar` needs a metric to invert (only a connection was declared)</code>.</td></tr>
+<tr><td><code>kretschmann</code></td><td>O escalar de Kretschmann R<sub>abcd</sub>R<sup>abcd</sup> — um número/expressão só, sem rótulo.</td><td><strong>Não</strong> — mesmo erro do <code>scalar</code>.</td></tr>
+<tr><td><code>geodesic</code> (9.11)</td><td>As equações da geodésica, uma por coordenada: ẍ<sup>a</sup> + Γ<sup>a</sup><sub>bc</sub>ẋ<sup>b</sup>ẋ<sup>c</sup> = 0. Sem rótulo — uma lista de equações, não de componentes de tensor.</td><td><strong>Sim</strong> — só precisa de Γ, nunca de g<sup>ab</sup>, ao contrário de <code>scalar</code>/<code>kretschmann</code>.</td></tr>
+<tr><td><code>accel</code> (9.12)</td><td>As mesmas equações de <code>geodesic</code>, resolvidas para a segunda derivada de cada coordenada: ẍ<sup>a</sup> = f<sup>a</sup>(x, ẋ). A forma que um integrador numérico consome diretamente. Sem rótulo.</td><td><strong>Sim</strong> — mesma razão de <code>geodesic</code>: só precisa de Γ.</td></tr>
+<tr><td><code>einstein</code> (9.13)</td><td>O tensor de Einstein G<sub>ab</sub> = R<sub>ab</sub> &minus; ½ g<sub>ab</sub>R, totalmente covariante, listado por componentes independentes exatamente como <code>ricci</code> (rótulo <code>G</code>).</td><td><strong>Não</strong> — <code>g_ab</code> aparece de forma literal na própria fórmula, e <code>R</code> já precisa de <code>g^bd</code>; mesmo erro do <code>scalar</code>/<code>kretschmann</code>, com o nome do comando trocado.</td></tr>
+<tr><td><code>riccisquare</code> (9.14)</td><td>O invariante R<sub>ab</sub>R<sup>ab</sup> — um número/expressão só, sem rótulo.</td><td><strong>Não</strong> — precisa subir os dois índices do Ricci.</td></tr>
+<tr><td><code>gaussbonnet</code> (9.14)</td><td>A densidade de Gauss-Bonnet/Euler R<sub>abcd</sub>R<sup>abcd</sup> &minus; 4R<sub>ab</sub>R<sup>ab</sup> + R² — recombinação pura de <code>kretschmann</code>/<code>riccisquare</code>/<code>scalar</code>, sem rótulo.</td><td><strong>Não</strong> — herdado dos três escalares que combina.</td></tr>
+<tr><td><code>weyl</code> (9.15)</td><td>O tensor de Weyl (conforme) C<sub>abcd</sub>, totalmente covariante, listado por componentes independentes exatamente como <code>riemann</code> (rótulo <code>C</code>).</td><td><strong>Não</strong> — <code>g_ab</code>/R aparecem de forma literal na fórmula. <strong>Recusa também em exatamente 2 dimensões</strong> (seção 9.15).</td></tr>
+<tr><td><code>weylsquare</code> (9.15)</td><td>O invariante C<sub>abcd</sub>C<sup>abcd</sup> — um número/expressão só, sem rótulo.</td><td><strong>Não</strong> — mesma razão de <code>weyl</code>, cuja barreira de dimensão também herda.</td></tr>
+</table>
+<p>Não existe consulta de holonomia na linguagem: a integração numérica de geodésica/transporte paralelo (Marco 5, <code>oderom-components::holonomy</code>) não está conectada a nenhuma palavra-chave de consulta, nem ao caderno, nem à CLI — é exercitada só por um teste Rust dedicado (<code>oderom-components/tests/holonomy.rs</code>), com uma malha fixada à mão, não por um caderno. <code>geodesic</code>/<code>accel</code> (abaixo) são o caminho <em>simbólico</em> — escrevem e isolam algebricamente, nunca integram numericamente; os dois nunca se confundem, cada um mora no seu próprio módulo, e um round futuro que muda isso precisa revisar este parágrafo.</p>
+<p>Qualquer uma das doze consultas acima pode ser envolvida por <code>export ALVO</code> (seção 9.17) para sair na sintaxe de uma ferramenta simbólica externa (Mathematica, SymPy) em vez da tipografia deste projeto — <code>export sympy kretschmann</code>, <code>export mathematica riemann g [up,down,down,down]</code>. Não é uma décima terceira consulta, é um envoltório aditivo sobre qualquer uma das doze, incluindo o marcador de variância da seção 9.16.</p>
+
+<h3>9.6 Alvos de saída</h3>
+<p><code>Target::Unicode</code> (padrão), <code>Target::Latex</code>, <code>Target::Json</code>. No caderno/aplicativo, a escolha não é do usuário: cada resultado calcula e guarda os dois textos, unicode e LaTeX, ao mesmo tempo (<code>EntryResult</code>, <code>oderom-session/src/entry.rs</code>) — a janela sempre tipografa o LaTeX via KaTeX. Só a linha de comando expõe a escolha, pela flag <code>--target</code> (capítulo 11). Apesar do nome, <code>Unicode</code> não converte nomes gregos para glifo — <code>theta</code> continua "theta" (texto simples, "console"); é o alvo <code>Latex</code> que produz <code>\theta</code>, <code>\sin\left(...\right)</code>, <code>\frac{...}{...}</code> — verificado rodando a mesma consulta com as duas flags e comparando a saída real:</p>
+<pre><code>--target unicode:
+  Gamma[^theta,phi,phi] = -sin(theta)*cos(theta)
+--target latex:
+  \Gamma^{\theta}_{\phi \phi} = -\sin\left(\theta\right) \cos\left(\theta\right)</code></pre>
+<p><code>Target::Json</code> produz uma árvore serializada da expressão (para um escalar isolado) ou um objeto com o resumo de componentes (para <code>christoffel</code>/<code>riemann</code>/<code>ricci</code>) — não um formato de texto para leitura, um formato para consumo por outro programa; ao contrário dos outros dois alvos, continua com índices inteiros crus (<code>"indices":[2,3,3]</code>) — é um formato para outro programa consumir, não para uma pessoa colar num artigo, então não recebeu o tratamento tipográfico abaixo.</p>
+<p><code>--target mathematica</code>/<code>--target sympy</code> (Rodada Exportação, seção 9.17) também existem como valor de <code>--target</code> nas dez consultas de componentes/escalar comuns da CLI — um jeito rápido de olhar a sintaxe traduzida sem passar pela gramática de <code>export</code>. A diferença real: sem a detecção/renomeação de colisão com palavra reservada nem a linha <code>symbols(...)</code> de SymPy que <code>export</code> acrescenta — <code>--target sympy</code> é uma olhada rápida, nunca a garantia de "colou e rodou" que só <code>export</code> promete. Para qualquer coisa que precise realmente rodar na ferramenta de destino, use <code>export</code>.</p>
+
+<h3>9.7 Tipografia de componentes e cópia por clique</h3>
+<p>Uma consulta que lista componentes (<code>christoffel</code>/<code>riemann</code>/<code>ricci</code>) nunca mostra um índice numérico cru — <code>R_{0,1,0,1}</code> não aparece em lugar nenhum. Os índices são os próprios nomes de coordenada da carta (letras gregas como <code>\theta</code>/<code>\phi</code> no alvo LaTeX, por extenso no Unicode), separados por um espaço simples no LaTeX — <code>R_{t r t r}</code> — nunca por vírgula. O rótulo em si passa pela mesma conversão: <code>christoffel</code> é <code>\Gamma</code>, a letra grega de verdade, não as cinco letras romanas soltas <code>Gamma</code> (que o KaTeX tipografaria como se fossem cinco variáveis multiplicadas). O alvo <code>Unicode</code>, sem tipografia matemática nenhuma, mantém a vírgula (<code>R[t,r,theta,phi]</code>) e o rótulo por extenso (<code>Gamma</code>), exatamente como já era.</p>
+<p>O espaço entre os nomes no LaTeX não é estético — é o que impede um macro grego de "engolir" a letra seguinte. <code>\theta</code> é uma <em>control word</em>: o TeX lê a barra invertida e continua consumindo letras enquanto houver letras, então <code>\theta</code> direto seguido da letra <code>r</code>, sem nada entre os dois, é lido como um único macro <code>\thetar</code> — que não existe, e o KaTeX mostra como texto cru em vermelho em vez de tipografar. Um espaço resolve sem alterar o resultado visual (modo matemático ignora espaço em branco para espaçamento — <code>t r</code> não abre nenhum vão a mais que <code>tr</code> abriria), mas encerra a leitura do macro no lugar certo. Foi exatamente esse bug — <code>\thetar</code> aparecendo cru na tela — que expôs os dois problemas junto: o rótulo <code>Gamma</code> sem a barra invertida e a concatenação sem separador. Os dois já saíam errados desde a primeira versão deste recurso; só ficaram visíveis quando alguém olhou de perto o resultado de <code>christoffel</code> — o exemplo do parágrafo anterior (<code>\Gamma^{\theta}_{\phi \phi}</code>) já é a forma corrigida.</p>
+<p>O índice é mostrado exatamente na variância em que a componente foi de fato calculada — nunca ajustado por estética. <code>riemann</code> a partir de uma métrica já teve o primeiro índice baixado, então sai totalmente covariante, <code>R_{t r t r}</code>, todo em subscrito; a partir de uma conexão pura (sem métrica para baixar índice) sai mista, <code>R^{a}_{bcd}</code>, com o índice contravariante em sobrescrito à esquerda — nunca o contrário, e nunca uma forma "arrumada" para combinar com a outra. <code>christoffel</code> é sempre mista, <code>\Gamma^{a}_{bc}</code> (um índice em cima, dois embaixo), <code>ricci</code> é sempre totalmente covariante, <code>R_{bd}</code>, não importa se veio de métrica ou de conexão.</p>
+<p>A anotação de quantos índices brutos uma componente independente resume (<code>(N components by symmetry)</code>) nunca fica colada na mesma linha da fórmula — é uma frase em inglês comum, nunca matemática, então nunca passa pelo tipografador de LaTeX/KaTeX junto com a fórmula: no caderno/aplicativo aparece como texto pequeno e cinza ao lado da fórmula (nunca dentro do que é copiado); na linha de comando e no REPL, como uma linha própria, indentada, logo abaixo. A mesma separação vale para as linhas de resumo do final (contagem de componentes truncadas, contagem de componentes identicamente nulas) — nunca compartilham linha com uma fórmula real.</p>
+<p>No caderno/aplicativo, clicar em qualquer componente de um resultado copia para a área de transferência o LaTeX limpo daquela componente — só a igualdade tipografada (<code>R_{t r t r} = \frac{...}{...}</code>), pronta para colar direto num documento LaTeX: nunca a anotação de simetria, nunca a linha de resumo, nunca outra componente, nunca o bloco inteiro. Um pequeno rótulo "copiado" aparece por um instante junto da componente clicada como confirmação — não um diálogo modal. Cada resultado, por trás dessa interação, já chega ao JavaScript com a fórmula e a anotação como campos separados (nunca uma única string concatenada) — a decisão de qual texto é fórmula e qual é legenda é feita inteiramente em Rust (<code>oderom_components::RenderedComponent</code>), antes mesmo da tela existir; o JavaScript só desenha essa divisão já pronta, nunca a decide.</p>
+
+<h3>9.8 Mensagens de erro comuns</h3>
+<p>Todas capturadas rodando o parser/CLI de verdade contra um arquivo construído para provocar cada uma:</p>
+<table class="ref">
+<tr><th>Situação</th><th>Mensagem real</th></tr>
+<tr><td>Marca de derivada (<code>'</code>) numa função <em>conhecida</em> (<code>sin</code>/<code>cos</code>/<code>exp</code>/<code>sinh</code>/<code>cosh</code>)</td><td><code>`sin` is a known function with a known derivative -- write `diff(sin(...), var)`, not `sin'(...)` or `sin_{...}(...)`</code></td></tr>
+<tr><td>Notação de linha (<code>'</code>) numa função indeterminada de mais de um argumento</td><td><code>`h'` (prime notation) is ambiguous for a function of 2 arguments -- use `h_{var,...}(...)` instead</code></td></tr>
+<tr><td>Subscrito de derivada nomeando uma variável que não é argumento da função</td><td><code>`h`'s derivative subscript names `x`, which is not one of its own arguments</code></td></tr>
+<tr><td>Marca de derivada sem lista de argumentos em seguida</td><td><code>`f` with a derivative mark must be followed by an argument list, e.g. `f'(r)` or `f_{r}(r)`</code></td></tr>
+<tr><td>Carta com número errado de coordenadas</td><td><code>chart `c` has 2 coordinates, but manifold `M` has dimension 3</code></td></tr>
+<tr><td>Nome já declarado</td><td><code>chart `c` is already declared</code></td></tr>
+<tr><td>Nenhuma métrica nem conexão no arquivo</td><td><code>no metric or connection found in the file</code></td></tr>
+<tr><td>Mais de uma métrica, sem desambiguar</td><td><code>the file declares more than one metric (g1, g2); pick one with --metric</code></td></tr>
+<tr><td><code>scalar</code>/<code>kretschmann</code>/<code>einstein</code>/<code>riccisquare</code>/<code>gaussbonnet</code>/<code>weyl</code>/<code>weylsquare</code> sem métrica disponível</td><td><code>`scalar` needs a metric to invert (only a connection was declared)</code> (idem, nome do comando trocado)</td></tr>
+<tr><td><code>weyl</code>/<code>weylsquare</code> numa métrica de dimensão 2</td><td><code>the Weyl tensor is not defined in 2 dimensions (the standard formula's 1/(n-2) term is undefined at n=2)</code></td></tr>
+<tr><td>Palavra-chave inicial não reconhecida (bloco do caderno)</td><td><code>expected a declaration (manifold/bundle/head/chart/metric/connection), an alias (NOME := expression), or a query (christoffel/riemann/ricci/scalar/kretschmann/geodesic/accel/einstein/riccisquare/gaussbonnet/weyl/weylsquare), found ...</code></td></tr>
+<tr><td>Uso de um nome nunca declarado como alias (nem antes, nem depois, no documento)</td><td>nenhuma — permanece uma variável livre comum, como sempre foi</td></tr>
+<tr><td>Uso de um alias antes da sua própria declaração</td><td><code>alias `f` is used before its own `f := ...` declaration</code></td></tr>
+<tr><td>Redeclaração do mesmo nome de alias</td><td><code>alias `f` is already declared</code></td></tr>
+<tr><td><code>geodesic</code>/<code>accel</code> sem nome de parâmetro</td><td><code>`geodesic` needs an affine parameter name, e.g. `geodesic tau` or `geodesic g tau`</code> (idêntica para <code>accel</code>, com o nome do comando trocado na própria mensagem)</td></tr>
+<tr><td><code>geodesic</code>/<code>accel</code> com parâmetro igual a uma coordenada da carta</td><td><code>affine parameter `r` collides with chart coordinate `r` -- geodesic needs a distinct name</code> (ou <code>-- accel needs a distinct name</code>, conforme o comando)</td></tr>
+<tr><td><code>geodesic</code>/<code>accel</code> com parâmetro igual a uma variável livre da métrica/conexão</td><td><code>affine parameter `M` collides with a free variable already used in this metric/connection -- geodesic needs a distinct name</code> (idem, nome do comando trocado para <code>accel</code>)</td></tr>
+<tr><td><code>accel</code>: coeficiente da segunda derivada normaliza para zero</td><td><code>the geodesic equation for coordinate `r` has a second-derivative coefficient that is identically zero -- cannot solve for its acceleration by dividing by zero</code> (nunca disparada por uma métrica/conexão real hoje — seção 9.12)</td></tr>
+</table>
+
+<h3>9.9 Aliases de expressão</h3>
+<pre><code>f := 1 - 2*M/r + Q^2/r^2
+
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -f,
+  [r,r] = 1/f,
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p><code>NOME := EXPRESSÃO</code> declara um alias: um nome curto para uma subexpressão escalar que, de outro modo, teria que ser repetida por extenso em toda componente que a usa — o exemplo acima é a métrica de Reissner-Nordström, com a função <code>f(r) = 1 - 2M/r + Q²/r²</code> escrita uma única vez. Um bloco de alias classifica como declaração (mesmo grupo de <code>manifold</code>/<code>bundle</code>/<code>chart</code>/<code>metric</code>/<code>connection</code>) e por isso participa do mesmo mecanismo de reconstrução de declarações do caderno: o escopo de um alias é <strong>o caderno inteiro, de cima para baixo, a partir do ponto da sua declaração</strong> — não é local a um bloco. Um alias pode referenciar outro alias declarado antes dele.</p>
+<p>O alias é <strong>puro açúcar sintático</strong>, expandido por substituição textual dentro do parser de expressões, antes de qualquer coisa chegar ao motor de normalização (<code>oderom-expr</code>). Depois de expandido, não sobra rastro: a árvore de expressão resultante de <code>[t,t] = -f</code> é byte a byte idêntica à que <code>[t,t] = -(1 - 2*M/r + Q^2/r^2)</code> produziria escrita à mão — verificado comparando o <code>kretschmann</code> das duas formas da métrica de Reissner-Nordström (<code>reissner_nordstrom.od</code> contra <code>reissner_nordstrom_alias.od</code>, <code>oderom-cli/tests/fixtures/</code>): mesmo resultado, byte idêntico, <code>(-96*M*Q^2*r + 48*M^2*r^2 + 56*Q^4)/r^8</code>. Declarar ou expandir um alias nunca dispara cálculo nenhum por conta própria — só é resolvido quando o bloco que o usa é de fato executado, a mesma regra de sempre ("nada recalcula sozinho").</p>
+<p>Um alias é usado <strong>sem parênteses</strong> — só <code>f</code>, nunca <code>f(...)</code>. A forma com parênteses é sempre chamada de função (seção 9.4/9.10): <code>f(r)</code> é a função indeterminada <code>f</code> aplicada a <code>r</code>, nunca lida como uma chamada de alias, mesmo que <code>f</code> esteja <em>também</em> declarado como alias no mesmo arquivo — as duas coisas não colidem porque vivem em posições sintáticas diferentes (com parênteses ou sem), nunca a mesma. Um nome de alias tem que ser declarado antes de usado (referência antecipada é erro, não é lida como variável livre); um nome nunca declarado como alias em lugar nenhum do documento continua sendo uma variável livre comum, exatamente como <code>M</code>, <code>Q</code> ou qualquer outro símbolo físico sempre foi. Redeclarar o mesmo nome de alias é erro — a mesma regra que já vale para <code>chart</code>/<code>metric</code>/<code>connection</code> com nomes duplicados.</p>
+<p>Como um bloco de alias é uma declaração como qualquer outra, a mesma regra conservadora de obsolescência (capítulo 5) já cobre edição de alias sem nenhuma máquina nova: editar um bloco de alias marca obsoleto tudo abaixo dele no caderno, inclusive blocos de métrica/conexão/consulta que o usam — verificado com um teste dedicado (<code>editing_an_alias_block_marks_a_later_block_that_uses_it_obsolete</code>, <code>oderom-notebook/src/notebook.rs</code>) e também pela suíte de janela real (<code>oderom-app/dist/keytest.js</code>).</p>
+
+<h3>9.10 Funções indeterminadas e derivadas</h3>
+<div class="note">Esta seção só <strong>representa</strong> e <strong>deriva</strong> — nunca resolve nada. Não existe consulta nem operação que resolva uma função indeterminada para uma forma fechada, integre uma equação, ou monte a geodésica (isso é trabalho de uma rodada futura, separada; nada aqui antecipa como). O que existe é: escrever <code>f(r)</code> sem dar uma definição, e derivar corretamente uma expressão que a contenha.</div>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -f(r),
+  [r,r] = 1/f(r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p><code>f(r)</code> declara uma <strong>função indeterminada</strong>: um símbolo funcional novo, sem definição, que o motor trata como uma folha opaca — nunca tenta avaliar, nunca expande, nunca inventa uma identidade algébrica ligando <code>f</code> a nada. É deliberadamente <strong>diferente</strong> de um alias e de uma função conhecida, e as três nunca colapsam numa só: um alias (<code>NOME := EXPR</code>, seção 9.9) expande para uma expressão já conhecida; uma função conhecida (<code>sin</code>, <code>exp</code>, ...) tem valor e derivada já definidos pelo motor; uma função indeterminada não tem nem uma coisa nem outra — sua única propriedade é <em>ter</em> derivadas, que são elas próprias símbolos opacos (<code>f'</code>, <code>f''</code>), nunca simplificadas além da regra da cadeia. O mesmo nome pode ser as três coisas em posições diferentes sem colisão nenhuma: <code>f</code> sozinho é o alias (se declarado), <code>f(r)</code> é sempre a função indeterminada, <code>sin(x)</code> é sempre a função conhecida — a posição sintática (com ou sem parênteses, e qual nome) decide, nunca uma reinterpretação silenciosa.</p>
+<p>Nem todo nome fora da lista de cinco funções conhecidas vira função indeterminada, porém — um <strong>conjunto reservado</strong> de nomes com significado matemático padrão fica de fora dos dois grupos, rejeitado explicitamente em vez de silenciosamente aceito como símbolo opaco. O motivo é concreto: antes dessa reserva existir, <code>tan(theta)</code> numa métrica era aceito como função indeterminada — e derivado como <code>tan'</code>, um símbolo opaco qualquer, nunca a derivada real da tangente, <code>sec²</code>. Para quem escreveu <code>tan(theta)</code> esperando a tangente trigonométrica de verdade, o resultado parecia plausível e estava silenciosamente errado — exatamente a classe de falha (um número que passa por certo) que este projeto trata como mais grave que um erro alto. O conjunto reservado hoje: as recíprocas trigonométricas (<code>tan</code>, <code>cot</code>, <code>sec</code>, <code>csc</code>) e suas análogas hiperbólicas (<code>tanh</code>, <code>coth</code>, <code>sech</code>, <code>csch</code>); as duas grafias comuns de cada função trigonométrica e hiperbólica inversa (<code>asin</code>/<code>arcsin</code>, <code>acos</code>/<code>arccos</code>, <code>atan</code>/<code>arctan</code>, <code>asinh</code>/<code>arcsinh</code>, <code>acosh</code>/<code>arccosh</code>, <code>atanh</code>/<code>arctanh</code>); <code>log</code>/<code>ln</code> (logaritmo); <code>sqrt</code> (raiz quadrada); <code>atan2</code> (arco-tangente de dois argumentos, comum em física para recuperar um ângulo); <code>abs</code> (valor absoluto). Ficam de fora funções não-diferenciáveis/discretas sem derivada natural (<code>floor</code>, <code>ceil</code>, <code>sign</code>) — fora do escopo de um projeto centrado em curvatura diferenciável, e não a falha que esta lista existe para fechar.</p>
+<p>A reserva é <strong>"ainda não", nunca "proibido para sempre"</strong>: cada nome nela é uma função real que este projeto pode vir a implementar como conhecida numa rodada futura (a mesma forma como <code>exp</code>/<code>sinh</code>/<code>cosh</code> já passaram de indisponíveis a conhecidas numa rodada anterior) — reservar o nome agora é o que mantém essa porta aberta sem deixá-lo significar outra coisa (uma função indeterminada opaca) enquanto isso não acontece. Chamar um nome reservado com parênteses é erro explícito: <code>tan(theta)</code> dá <code>`tan` is a known elementary function, not yet implemented as callable -- reserved names cannot be used as an indeterminate function</code> — mensagem real, capturada rodando o parser. Uma marca de derivada (linha ou subscrito) num nome reservado dá o mesmo erro, nunca a mensagem de "função conhecida com derivada conhecida" (essa é só para as cinco de fato implementadas). Um nome reservado usado sem parênteses continua uma variável livre comum, sem tratamento especial nenhum — só a forma <code>NOME(...)</code> é afetada.</p>
+<p>A derivada de uma função indeterminada de <strong>uma variável só</strong> usa notação de linha — <code>f'(r)</code>, <code>f''(r)</code>, uma linha por ordem de derivada, exatamente como no papel. A notação de linha é ambígua para uma função de <strong>mais de uma variável</strong> (derivada em relação a qual delas?), então uma função como <code>h(t, r)</code> usa um subscrito entre chaves, sempre separado por vírgula, nomeando a(s) variável(is) em relação à(s) qual(is) derivar — <code>h_{t}(t, r)</code> é <code>∂h/∂t</code>, <code>h_{r}(t, r)</code> é <code>∂h/∂r</code>, <code>h_{t,t}(t, r)</code> é <code>∂²h/∂t²</code>, <code>h_{t,r}(t, r)</code> é a parcial mista <code>∂²h/∂t∂r</code>. A vírgula é sempre exigida dentro das chaves (nunca a forma colada <code>h_{tr}</code> que <code>NOME_{...}</code> aceita para índice de componente de métrica, capítulo 9.2) — essa gramática não tem uma carta em escopo para decompor um nome colado de volta em coordenadas, então a vírgula é o único separador. Usar notação de linha numa função de mais de um argumento é erro explícito, apontando para a forma de subscrito. Uma função <em>conhecida</em> (<code>sin</code>, <code>exp</code>, ...) nunca aceita marca de derivada nenhuma — <code>sin'(x)</code> é erro, nomeando <code>diff(sin(x), x)</code> como a forma real de obter essa derivada.</p>
+<p>Derivar uma expressão que contenha uma função indeterminada produz a regra da cadeia correta, generalizada sobre a ordem em vez de fixada numa função irmã (ao contrário de <code>sin</code>, cuja derivada é sempre literalmente <code>cos</code>): a derivada de <code>f</code> de ordem <code>k</code> é <code>f</code> de ordem <code>k+1</code>. <code>diff(f(r), r)</code> dá <code>f'(r)</code>; <code>diff(f(r)^2, r)</code> dá <code>2*f(r)*f'(r)</code> (regra da potência e regra da cadeia compondo normalmente); <code>diff(f(r)*g(r), r)</code> dá <code>f'(r)*g(r) + f(r)*g'(r)</code> (regra do produto, duas funções indeterminadas distintas, nunca colapsando uma na outra); a derivada de <code>f(r)</code> em relação a uma coordenada que não é <code>r</code> é zero — não como caso especial, mas porque a regra da cadeia multiplica por <code>d(r)/d(outra) = 0</code>, o mesmo mecanismo que já zera a derivada de qualquer variável em relação a outra. Verificado rodando o parser/motor de verdade: uma métrica com <code>f(r)</code> desconhecido é aceita (nunca mais rejeitada como <code>unknown function</code>), e consultar <code>christoffel</code> sobre ela produz símbolos reais contendo <code>f(r)</code> e <code>f'(r)</code>, tipografados de forma legível — por exemplo <code>Γ<sup>r</sup><sub>tt</sub> = ½f(r)f'(r)</code>.</p>
+
+<h3>9.11 <code>geodesic</code> — a equação geodésica</h3>
+<div class="note">Esta consulta só <strong>escreve</strong> a equação — nunca a resolve. Não existe modo separado para geodésica nula/tipo-tempo, nem para parametrização não-afim: a equação ẍ<sup>a</sup> + Γ<sup>a</sup><sub>bc</sub>ẋ<sup>b</sup>ẋ<sup>c</sup> = 0 é a mesma nos três casos — o que muda é a condição inicial, não a equação, e condição inicial não é algo que esta consulta recebe ou produz.</div>
+<p>Sintaxe: <code>geodesic PARÂMETRO</code> ou <code>geodesic ALVO PARÂMETRO</code> — o nome do parâmetro afim (tipicamente <code>tau</code>) vem sempre por último; o alvo (nome de métrica/conexão), quando presente, vem antes dele, na mesma posição que ocupa em <code>christoffel</code>/<code>riemann</code>/<code>ricci</code>/<code>scalar</code>/<code>kretschmann</code> (“a geodésica de <code>g</code>, parametrizada por <code>tau</code>”). Ao contrário dessas cinco, o parâmetro não é opcional — <code>geodesic</code> sozinho, sem nome nenhum depois, é erro: <code>`geodesic` needs an affine parameter name, e.g. `geodesic tau` or `geodesic g tau`</code>. <code>accel</code> (seção 9.12) compartilha exatamente essa mesma gramática e essa mesma regra de colisão — só o que a consulta retorna muda entre as duas.</p>
+<p><strong>Regra de colisão, obrigatória:</strong> o nome do parâmetro afim não pode coincidir com nenhuma coordenada da carta em uso, nem com nenhuma variável livre já usada na métrica/conexão (<code>M</code>, <code>Q</code>, ...). Coincidir tornaria a equação genuinamente ambígua — <code>t(r)</code> seria, ao mesmo tempo, "a coordenada <code>t</code> como função do parâmetro <code>r</code>" e "a coordenada livre <code>t</code> multiplicada pela coordenada livre <code>r</code>" — então os dois casos são recusados de forma explícita, nunca resolvidos por adivinhação. Mensagens reais, capturadas rodando o parser contra <code>schwarzschild_ascii.od</code>:</p>
+<pre><code>$ oderom geodesic schwarzschild_ascii.od --param r
+error: parse error: affine parameter `r` collides with chart coordinate `r`
+  -- geodesic needs a distinct name
+
+$ oderom geodesic schwarzschild_ascii.od --param M
+error: parse error: affine parameter `M` collides with a free variable already
+  used in this metric/connection -- geodesic needs a distinct name</code></pre>
+<p><strong>O ponto central: duas encarnações do mesmo nome de coordenada.</strong> Dentro de uma mesma equação geodésica, <code>r</code> significa duas coisas diferentes ao mesmo tempo: dentro de um coeficiente de Christoffel, é a coordenada livre de sempre (a mesma que aparece na métrica); no termo de velocidade/aceleração, é <code>r</code> <em>como função do parâmetro afim</em> — a segunda encarnação, com derivada própria. As duas nunca colapsam numa só: são representadas por formas de árvore diferentes desde a construção (a mesma máquina de função indeterminada da seção 9.10, aqui aplicada ao próprio nome da coordenada), nunca o mesmo nó reinterpretado. O que muda entre os dois alvos de saída é só a <strong>tipografia</strong> dessa segunda encarnação — a mesma distinção que <code>theta</code>/<code>\theta</code> já tem para uma coordenada comum (seção 9.7): no alvo <code>Unicode</code>, por extenso, com o parâmetro explícito, porque um ponto sobreposto à letra não sobrevive em texto simples — <code>t'(tau)</code>, <code>r''(tau)</code>; no alvo <code>Latex</code>, notação de ponto, no estilo de livro, com o parâmetro implícito — <code>\dot{t}</code>, <code>\ddot{r}</code>. As duas descrevem a mesma equação; só a forma como a segunda encarnação é escrita muda com o alvo — a escolha nunca é do usuário via opção, segue o alvo, exatamente como o resto da saída já faz.</p>
+<p>Exemplo real, a equação de <code>t</code> de Schwarzschild (capítulo 10, exemplo 5 tem as quatro por extenso), nos dois alvos:</p>
+<pre><code>--target unicode:
+  (2*M*r*t''(tau) - 2*M*r'(tau)*t'(tau) - r^2*t''(tau))/(2*M*r - r^2) = 0
+
+--target latex:
+  \frac{(2 M r \ddot{t} - 2 M \dot{r} \dot{t} - r^{2} \ddot{t})}{(2 M r - r^{2})} = 0</code></pre>
+<p>Como só precisa de Γ (nunca de g<sup>ab</sup> para subir/descer índice), <code>geodesic</code> funciona a partir de uma <code>connection</code> pura da mesma forma que <code>christoffel</code>/<code>riemann</code>/<code>ricci</code> já funcionam (capítulo 9.5) — ao contrário de <code>scalar</code>/<code>kretschmann</code>, que continuam exigindo uma métrica de verdade.</p>
+
+<h3>9.12 <code>accel</code> — a geodésica resolvida para a aceleração</h3>
+<div class="note">Isto é isolamento algébrico, não solução de EDO: <code>accel</code> nunca integra, nunca produz uma trajetória, nunca escolhe uma condição inicial. Cada equação de <code>geodesic</code> é linear na sua própria segunda derivada, então "resolver para ẍ<sup>a</sup>" é dividir pelo coeficiente de ẍ<sup>a</sup> e mover o resto para o outro lado — nada além disso. É um comando separado de <code>geodesic</code> (que continua existindo, inalterado, produzindo a forma canônica igual a zero), nunca um modo dele.</div>
+<p>Sintaxe idêntica a <code>geodesic</code>: <code>accel PARÂMETRO</code> ou <code>accel ALVO PARÂMETRO</code>, mesma regra de colisão (seção 9.11). A saída é ẍ<sup>a</sup> = f<sup>a</sup>(x, ẋ), uma equação por coordenada, com a segunda derivada daquela própria coordenada isolada à esquerda — a forma que um integrador numérico consome diretamente, em vez da forma canônica igual a zero que <code>geodesic</code> produz.</p>
+<p><strong>Antes de dividir:</strong> cada equação de <code>geodesic</code> tem a forma C<sub>a</sub>·ẍ<sup>a</sup> + R<sub>a</sub> = 0, onde C<sub>a</sub> é o coeficiente de ẍ<sup>a</sup> e R<sub>a</sub> é o resto (nunca contém uma segunda derivada). Antes de produzir ẍ<sup>a</sup> = &minus;R<sub>a</sub>/C<sub>a</sub>, <code>accel</code> verifica estruturalmente — nunca assume — que ẍ<sup>a</sup> aparece em grau exatamente 1 na equação (nunca ao quadrado, nunca dentro de outra função, nunca em mais de um fator do mesmo produto), via <code>oderom_expr::isolate_linear</code>, uma análise puramente estrutural da árvore da expressão (nunca substituição numérica). Essa linearidade não é uma propriedade da métrica/carta escolhida — é um fato matemático sobre o que uma equação geodésica <em>é</em> (a própria definição ẍ<sup>a</sup> + Γ<sup>a</sup><sub>bc</sub>ẋ<sup>b</sup>ẋ<sup>c</sup> = 0 já é linear, coeficiente literal 1, em ẍ<sup>a</sup>): nenhuma equação geodésica genuína, de nenhuma métrica ou conexão, pode deixar de satisfazê-la. Por isso, ao contrário do coeficiente (abaixo), uma violação aqui não é um <code>Result</code> que a chamadora possa capturar — é uma asserção que falha alto (<code>.expect()</code>, um pânico documentando a invariante), porque não existe entrada legítima que a alcance: só um bug na própria montagem de <code>geodesic_equations</code>, ou uma chamadora passando algo que nunca foi uma equação geodésica.</p>
+<p>O coeficiente C<sub>a</sub> em si é diferente: <strong>pode</strong>, em princípio, se anular para uma métrica/carta degenerada — isso não é uma propriedade da equação em si, é uma propriedade de qual métrica foi escolhida, então uma extensão futura do motor pode legitimamente alcançar esse caso. Por isso continua sendo um erro capturável de verdade, nomeando a coordenada, em vez de uma asserção: dada a construção atual de <code>geodesic_equations</code> (o termo de aceleração é somado uma única vez, com coeficiente literal 1) e a regra de colisão obrigatória de <code>geodesic</code>/<code>accel</code> (que já impede qualquer componente de Γ de conter um nó <code>coord''(param)</code>), esse coeficiente é hoje sempre exatamente 1 e nunca zero, para qualquer métrica ou conexão real — mas a verificação continua presente porque protege contra uma mudança futura em como a equação é montada, não porque o caso real precise dela hoje; se algum dia disparar, a mensagem nomeia a coordenada envolvida (<code>the geodesic equation for coordinate `r` has a second-derivative coefficient that is identically zero</code>) em vez de dividir por zero silenciosamente.</p>
+<p>A saída passa pela mesma normalização (forma racional canônica) que o resto do motor usa — nunca uma fração dentro de fração. Exemplo real, a equação radial de Schwarzschild (capítulo 10, exemplo 6), cujo coeficiente de Christoffel não é um monômio trivial:</p>
+<pre><code>--target unicode:
+  r''(tau) = (-M*r^2*r'(tau)^2 + M*r^2*t'(tau)^2 + 4*M*r^4*sin(theta)^2*phi'(tau)^2
+    + 4*M*r^4*theta'(tau)^2 - 4*M^2*r*t'(tau)^2 - 4*M^2*r^3*sin(theta)^2*phi'(tau)^2
+    - 4*M^2*r^3*theta'(tau)^2 + 4*M^3*t'(tau)^2 - r^5*sin(theta)^2*phi'(tau)^2
+    - r^5*theta'(tau)^2)/(2*M*r^3 - r^4)</code></pre>
+<p>Uma única fração reduzida, não uma fração de frações, apesar do denominador <code>2*M*r^3 - r^4</code> não ser trivial — verificado tanto por inspeção quanto por um teste de aceitação dedicado (<code>oderom-components/tests/schwarzschild.rs</code>, <code>accel_radial_equation_of_schwarzschild_has_no_nested_fraction</code>).</p>
+<p>A notação segue exatamente a mesma regra de <code>geodesic</code> (seção 9.11): ponto no alvo LaTeX dos dois lados do <code>=</code> (<code>\ddot{t} = ...</code>), forma explícita no Unicode (<code>t''(tau) = ...</code>), o parâmetro sempre implícito no LaTeX. Como só precisa de Γ, <code>accel</code> funciona a partir de uma <code>connection</code> pura exatamente como <code>geodesic</code> (capítulo 9.5).</p>
+<p><strong>O teste de ouro</strong> que garante que a forma resolvida e a forma canônica são a mesma equação: multiplicar <code>accel</code> de volta pelo coeficiente C<sub>a</sub> e mover para um lado tem que reproduzir, byte a byte após normalizar, exatamente o que <code>geodesic</code> produz para a mesma métrica e o mesmo parâmetro — nunca dois cálculos independentes que só parecem concordar (<code>oderom-components/tests/schwarzschild.rs</code>, <code>accel_of_schwarzschild_reproduces_geodesic_when_multiplied_back</code>).</p>
+
+<h3>9.13 <code>einstein</code> — o tensor de Einstein</h3>
+<p>G<sub>ab</sub> = R<sub>ab</sub> &minus; ½ g<sub>ab</sub>R, totalmente covariante — aritmética literal sobre três quantidades que o programa já calcula (<code>ricci</code>, a própria métrica, e o escalar que <code>scalar</code> já produz), não uma computação de curvatura nova. Listado por componentes independentes exatamente como <code>ricci</code>: mesma tipografia de índices por nome, mesma contagem "N componentes identicamente zero", mesmo clique-para-copiar. Só a forma totalmente covariante — subir um índice para a forma mista ou contravariante é matemática nova, fora do escopo desta rodada; se um dia for pedida, é rodada à parte.</p>
+<p>Sintaxe idêntica às primeiras cinco consultas: <code>einstein [ALVO]</code>. Ao contrário de <code>christoffel</code>/<code>riemann</code>/<code>ricci</code>, porém, <strong>exige uma métrica de verdade</strong> — <code>g_ab</code> aparece de forma literal na própria fórmula, e R = g<sup>bd</sup>R<sub>bd</sub> já precisa inverter a métrica, a mesma razão que já faz <code>scalar</code>/<code>kretschmann</code> recusarem uma conexão pura. A partir de <code>connection_only.od</code>, mesmo tipo de erro, nome do comando trocado:</p>
+<pre><code>$ oderom einstein connection_only.od
+error: `einstein` needs a metric to invert (only a connection was declared)</code></pre>
+<p><strong>Não é a equação de campo com fonte.</strong> Esta consulta produz G<sub>ab</sub> sozinho — nunca G<sub>ab</sub> = 8πT<sub>ab</sub>, nem nada que exija um tensor de energia-momento fornecido pelo usuário. Não há como declarar T<sub>ab</sub> na linguagem hoje, e resolver a equação com fonte é um projeto à parte. O caso de vácuo é simplesmente G<sub>ab</sub> saindo identicamente zero — a própria contagem "N componentes identicamente zero" já expressa isso, sem precisar de um modo separado.</p>
+<p><strong>O teste de ouro:</strong> Schwarzschild é solução de vácuo (R<sub>ab</sub> = 0, R = 0), então <code>einstein</code> nela tem que dar as dez componentes independentes identicamente nulas — se alguma saísse não-nula, seria um erro real, não uma peculiaridade da métrica. Verificado de fato (capítulo 10, exemplo 7).</p>
+<p>Reissner-Nordström (elétrica, não vácuo) dá o caso oposto: componentes reais, não-nulas. Interessante à parte: o escalar de Ricci de Reissner-Nordström já é zero (seção anterior a esta, e <code>oderom-components/tests/reissner_nordstrom.rs</code>'s própria <code>ricci_scalar_of_reissner_nordstrom_is_zero</code> — o tensor eletromagnético é de traço nulo em 4D), então a fórmula colapsa para G<sub>ab</sub> = R<sub>ab</sub> exatamente — <code>einstein</code> e <code>ricci</code> saem <em>byte a byte idênticos</em> em Reissner-Nordström, a verificação mais direta possível de que a nova consulta reaproveita a saída real de <code>ricci</code>, não recalcula algo parecido por conta própria (<code>oderom-components/tests/reissner_nordstrom.rs</code>, <code>einstein_of_reissner_nordstrom_equals_ricci_since_the_scalar_vanishes</code>).</p>
+<p>Um segundo caso instrutivo, à parte de Schwarzschild/Reissner-Nordström: a esfera S² unitária (capítulo 10, exemplo 3) tem Ricci genuinamente não-nulo (R<sub>ab</sub> = g<sub>ab</sub>, R = 2) — não é vácuo — e ainda assim seu tensor de Einstein também sai identicamente zero. Não é coincidência da esfera especificamente: em exatamente duas dimensões, G<sub>ab</sub> é sempre identicamente nulo, um fato real sobre a própria definição do tensor de Einstein em 2D, não uma simplificação que o motor aplica. Verificado computacionalmente contra a saída real de <code>ricci</code>/<code>scalar</code> para S² (<code>oderom-components/tests/round_sphere_einstein.rs</code>), não assumido — confirma primeiro que o Ricci realmente não é nulo antes de tratar o Einstein nulo resultante como significativo.</p>
+
+<h3>9.14 <code>riccisquare</code>/<code>gaussbonnet</code> — invariantes escalares</h3>
+<p>Dois números/expressões, sem rótulo, mesma forma de <code>scalar</code>/<code>kretschmann</code> — nenhum dos dois é uma computação de curvatura nova, os dois são aritmética sobre o que o programa já calcula:</p>
+<ul>
+<li><code>riccisquare</code> &rarr; R<sub>ab</sub>R<sup>ab</sup>, o Ricci contraído consigo mesmo depois de subir os dois índices com g<sup>ab</sup>.</li>
+<li><code>gaussbonnet</code> &rarr; R<sub>abcd</sub>R<sup>abcd</sup> &minus; 4R<sub>ab</sub>R<sup>ab</sup> + R² — recombinação pura de <code>kretschmann</code>, <code>riccisquare</code> e <code>scalar</code>; em exatamente 4 dimensões é a densidade cuja integral é (proporcional a) a característica de Euler, mas a fórmula/nome fazem sentido em qualquer dimensão, e esta consulta não se restringe a 4D.</li>
+</ul>
+<p>Nomes escolhidos deliberadamente sem sublinhado — <code>ricci_square</code> nunca lexaria como um token só, o mesmo problema que já descartou <code>geodesic_solved</code> em favor de <code>accel</code> (seção 9.12): <code>_</code> é o operador de subscrito deste léxico, não um caractere de identificador. <code>gaussbonnet</code> foi preferido a <code>euler</code> por ser inequívoco (não colide com característica de Euler, ângulos de Euler, etc.).</p>
+<p>Os dois exigem uma métrica de verdade (sobem índice, precisam de g<sup>ab</sup>) — recusam conexão pura com o mesmo erro padrão de <code>scalar</code>/<code>kretschmann</code>, nome do comando trocado.</p>
+<p><strong>Testes de ouro, os dois em vácuo:</strong> Schwarzschild tem Ricci nulo, então <code>riccisquare</code> nela é exatamente <code>0</code>; e como os outros dois termos do Gauss-Bonnet somem em vácuo, <code>gaussbonnet</code> tem que igualar <code>kretschmann</code> byte a byte — <code>48*M^2/r^6</code>, o mesmo valor, nunca uma coincidência numérica de arredondamento (<code>oderom-components/tests/schwarzschild.rs</code>, <code>ricci_squared_of_schwarzschild_is_zero</code>/<code>gauss_bonnet_of_schwarzschild_equals_kretschmann</code>). Em Reissner-Nordström (não-vácuo) os dois saem genuinamente não-nulos — verificado (capítulo 10, exemplo 8).</p>
+
+<h3>9.15 <code>weyl</code>/<code>weylsquare</code> — o tensor de Weyl</h3>
+<div class="note">A barreira de dimensão é obrigatória, leia antes de rodar num espaço 2D: <code>weyl</code>/<code>weylsquare</code> <strong>recusam</strong> em exatamente 2 dimensões — não travam, não dividem por zero, não inventam uma componente. Em 3D funcionam normalmente e dão zero (por teorema real, não por caso especial no código). Em 4D ou mais, calculam normalmente.</div>
+<p>C<sub>abcd</sub>, o tensor de Weyl (conforme), totalmente covariante, listado por componentes independentes exatamente como <code>riemann</code> — mesma tipografia de índices, mesma contagem por simetria, mesmo clique-para-copiar. Em dimensão n:</p>
+<pre><code>C_abcd = R_abcd - 1/(n-2) (g_ac R_db - g_ad R_cb - g_bc R_da + g_bd R_ca)
+         + R/((n-1)(n-2)) (g_ac g_db - g_ad g_cb)</code></pre>
+<p>— Riemann menos as partes de traço que o Ricci e o escalar carregam, deixando só a parte "puramente conforme". Só a forma totalmente covariante, mesma decisão de <code>einstein</code> (seção 9.13): subir índice é outra rodada. Exige uma métrica de verdade (g<sub>ab</sub>/R aparecem de forma literal na fórmula) — recusa conexão pura com o erro padrão, nome do comando trocado.</p>
+<p><strong>A barreira de dimensão, em detalhe:</strong> os fatores 1/(n&minus;2) da fórmula estouram em n=2 — não é o programa falhando ao calcular algo, é o próprio tensor de Weyl não sendo um objeto matemático definido em 2D (o Riemann tem uma componente independente só nessa dimensão, e não sobra nenhuma informação "puramente conforme" para separar). <code>weyl</code>/<code>weylsquare</code> recusam antes de dividir por zero:</p>
+<pre><code>$ oderom weyl hyperbolic_plane.od
+error: the Weyl tensor is not defined in 2 dimensions (the standard
+  formula's 1/(n-2) term is undefined at n=2)</code></pre>
+<p>Em exatamente 3 dimensões, ao contrário, a fórmula é bem definida e o Weyl é identicamente nulo — um teorema real (em 3D o Riemann tem exatamente tantas componentes independentes quanto o Ricci, então o Ricci já determina todo o Riemann, e não sobra nada "puramente conforme"). Isso não é tratado como caso especial no código — a mesma fórmula de qualquer dimensão &ge; 3 é usada, e o resultado sai zero por conta própria; verificado contra uma métrica 3D genuinamente curva e sem simetria máxima (não a 3-esfera, que seria conformemente plana "de graça" e testaria menos o teorema), não assumido (<code>oderom-components/tests/three_dimensional_weyl.rs</code>).</p>
+<p><strong>O teste de ouro:</strong> Schwarzschild é vácuo (R<sub>ab</sub>=0, R=0), então os termos de correção da fórmula somem inteiramente e C<sub>abcd</sub> = R<sub>abcd</sub> — <code>weyl</code> e <code>riemann</code> saem <em>byte a byte idênticos</em> na mesma métrica (capítulo 10, exemplo 8). Como o vácuo por si só não exercita o sinal do termo de traço (∝R, que também é zero ali), a verificação independente mais forte vem de De Sitter — o único ponto fixo deste projeto com escalar de Ricci genuinamente não-nulo (R=12H², máximamente simétrico) — onde o Weyl também tem que sair zero, e sai, exercitando esse termo de verdade (<code>oderom-components/tests/desitter.rs</code>, <code>weyl_of_de_sitter_is_identically_zero</code>).</p>
+<p>Em Reissner-Nordström (não-vácuo), Weyl é genuinamente não-nulo e diferente de Riemann — verificado tanto contra uma montagem à mão da fórmula a partir das saídas reais de <code>riemann</code>/<code>ricci</code>/<code>scalar</code> quanto contra a propriedade que de fato distingue Weyl de Riemann: ser <strong>completamente de traço nulo</strong> — contrair qualquer par de índices com a métrica inversa dá exatamente zero, verificado computacionalmente (não assumido), um teste matemático independente de qualquer valor que o próprio programa já produziu (<code>oderom-components/tests/reissner_nordstrom.rs</code>, <code>weyl_of_reissner_nordstrom_is_traceless</code>). Uma identidade adicional, também verificada: R<sub>abcd</sub>R<sup>abcd</sup> = C<sub>abcd</sub>C<sup>abcd</sup> + 2·R<sub>ab</sub>R<sup>ab</sup> quando R=0 (o caso de Reissner-Nordström) — <code>kretschmann</code> igual a <code>weylsquare</code> mais duas vezes <code>riccisquare</code>, as três consultas concordando entre si.</p>
+
+<h3>9.16 Marcação de variância de índice — subir e descer índices de um tensor já calculado</h3>
+<p>Por padrão, cada consulta devolve seu tensor numa variância fixa (a tabela da seção 9.5): <code>riemann</code> sai totalmente covariante a partir de uma métrica, <code>ricci</code>/<code>einstein</code>/<code>weyl</code> também. Um marcador opcional, entre colchetes, ao final da consulta, pede a variância que o usuário quiser em vez da variância padrão — um <code>up</code> ou <code>down</code> por índice do tensor, na ordem em que os índices aparecem:</p>
+<pre><code>riemann [up,down,down,down]
+ricci g [up,up]
+weyl [down,down,up,down]</code></pre>
+<p><code>up</code> sobe aquele índice com g<sup>ab</sup> se ele ainda não for contravariante; <code>down</code> desce com g<sub>ab</sub> se ainda não for covariante — um índice que já está na variância pedida fica como está, sem operação nenhuma. O alvo (nome da métrica/conexão) continua vindo antes do marcador, na mesma posição de sempre: <code>ricci g [up,up]</code>, não <code>ricci [up,up] g</code>. Sem o marcador, nada muda: toda consulta continua produzindo exatamente a variância que sempre produziu — o marcador é aditivo, nunca uma mudança de comportamento padrão.</p>
+<p>Transcrição real (REPL, Schwarzschild), <code>riemann</code> subindo o primeiro índice:</p>
+<pre><code>oderom&gt; riemann [up,down,down,down]
+inverting the metric...
+computing Christoffel symbols...
+[1] riemann [up,down,down,down] -- [OK]
+R[^t,r,t,r] = 2*M/(-2*M*r^2 + r^3)
+R[^t,r,r,t] = 2*M/(2*M*r^2 - r^3)
+R[^t,theta,t,theta] = M/(-r)
+...
+232 independent components identically zero</code></pre>
+<p>O <code>^</code> na frente de <code>t</code> é a mesma tipografia de índice contravariante que <code>christoffel</code> já usa para Γ<sup>a</sup><sub>bc</sub> (seção 9.4/9.7) — o mecanismo de exibição não mudou nada, só passou a receber um padrão de variância diferente do padrão fixo de sempre. Uma diferença visível e esperada: uma consulta com marcador mostra toda componente independente crua, sem o agrupamento por simetria que <code>riemann</code>/<code>ricci</code> sem marcador mostram (a nota "N componentes por simetria") — o grupo de simetria de um tensor de variância mista genérica não é necessariamente o mesmo do totalmente covariante, então a consulta marcada não tenta reaproveitá-lo. Os <em>valores</em> são idênticos de qualquer forma — só a contagem de linhas mostradas muda.</p>
+<p><strong>Quais consultas aceitam o marcador:</strong> <code>riemann</code>, <code>ricci</code>, <code>einstein</code>, <code>weyl</code> — os quatro tensores de verdade. O marcador sempre precisa de uma métrica declarada (nunca funciona a partir de uma <code>connection</code> pura, mesmo para <code>riemann</code>/<code>ricci</code>, que sem marcador funcionam dos dois — subir/descer índice usa g<sup>ab</sup>/g<sub>ab</sub>, que só existem a partir de uma métrica de verdade):</p>
+<pre><code>$ oderom-repl
+oderom&gt; ricci [up,up]
+error: `ricci` needs a metric to invert (only a connection was declared)</code></pre>
+<p>O número de <code>up</code>/<code>down</code> tem que bater exatamente com o posto do tensor (4 para <code>riemann</code>/<code>weyl</code>, 2 para <code>ricci</code>/<code>einstein</code>) — nem menos, nem mais, nunca completado ou truncado silenciosamente:</p>
+<pre><code>oderom&gt; riemann [up,down,down]
+error: `riemann` has 4 index/indices, but the variance marker names 3 -- they must match exactly</code></pre>
+<p>Um escalar (<code>scalar</code>, <code>kretschmann</code>, <code>riccisquare</code>, <code>gaussbonnet</code>, <code>weylsquare</code>) não tem índice nenhum para subir ou descer — o marcador nesses é erro claro, não ignorado silenciosamente:</p>
+<pre><code>oderom&gt; scalar [up]
+error: `scalar` is a scalar -- it has no indices, so an index-variance
+  marker doesn't apply. Use it on riemann, ricci, einstein, or weyl
+  instead.</code></pre>
+<div class="note">
+  <strong>Christoffel não aceita marcador de variância — e essa recusa é matemática, não uma limitação do programa.</strong> Γ<sup>a</sup><sub>bc</sub> não é um tensor: ao trocar de carta, ele se transforma com um termo adicional que não é homogêneo (um termo com uma segunda derivada da transformação de coordenadas) — é exatamente esse termo extra que faz Γ ser uma <em>conexão</em>, e não um tensor. Um objeto que não é tensor não tem "a mesma coisa com os índices na outra posição": subir ou descer os índices de Γ com a métrica, mecanicamente, produz um conjunto de números que não se transforma nem como tensor, nem como conexão, nem como nenhum outro objeto geométrico reconhecível — um resultado com aparência de resposta legítima, mas sem significado nenhum por trás. Este projeto se recusa a produzir esse tipo de saída plausível-porém-falsa, pela mesma disciplina que já faz <code>scalar</code> recusar uma conexão pura (seção 9.5) e <code>weyl</code> recusar dimensão 2 (seção 9.15): quando uma operação é matematicamente indefinida, o motor recusa com uma mensagem que explica o porquê, em vez de calcular algo de qualquer jeito.
+  <pre><code>oderom&gt; christoffel [up,down,down]
+error: Christoffel is not a tensor -- it transforms with a
+  non-homogeneous term, which is exactly what makes it a connection
+  instead of a tensor. Raising or lowering its indices with the metric
+  would not produce a tensor, a connection, or any geometric object --
+  it would just be numbers with no meaning. For curvature, use
+  `riemann` instead.</code></pre>
+  <code>christoffel</code> sem marcador nenhum continua funcionando exatamente como sempre, na sua única variância mista natural (Γ<sup>a</sup><sub>bc</sub>) — só a <em>mudança</em> de variância é recusada, nunca a consulta em si.
+</div>
+
+<h3>9.17 <code>export</code> — tradução simbólica para Mathematica e SymPy</h3>
+<p><code>QUERY := 'export' ('mathematica'|'sympy') QUERY</code> — a palavra-chave <code>export</code>, um dos dois alvos simbólicos, e depois <strong>qualquer consulta</strong> desta mesma gramática (seção 9.5), recursivamente: um escalar, um tensor por componentes, com ou sem marcador de variância (9.16), <code>geodesic</code>/<code>accel</code> com seu parâmetro. Traduz o que a consulta interna produziria para dentro deste projeto (Unicode/LaTeX) para a sintaxe de outra ferramenta simbólica, para o usuário continuar manipulando ali — nunca resimplifica nem recalcula nada: a expressão exportada é exatamente a mesma árvore já normalizada pelo motor, só a sintaxe de superfície muda.</p>
+<pre><code>export sympy kretschmann
+export mathematica riemann g
+export sympy geodesic g tau
+export mathematica riemann [up,down,down,down]</code></pre>
+<p>Funciona nas duas superfícies — é uma construção da linguagem, não uma ação de interface: um bloco de consulta no caderno, ou a CLI, com o alvo e a consulta como dois argumentos posicionais próprios antes do arquivo:</p>
+<pre><code>oderom export mathematica kretschmann schwarzschild_ascii.od
+oderom export sympy riemann schwarzschild_ascii.od --metric g
+oderom export sympy geodesic schwarzschild_ascii.od --param tau</code></pre>
+<p>Um alvo desconhecido é erro claro, listando os dois nomes válidos; o mesmo vale para uma consulta desconhecida depois do alvo — nenhum dos dois é adivinhado:</p>
+<pre><code>$ oderom export octave kretschmann schwarzschild_ascii.od
+error: parse error: unknown export target `octave` (expected one of:
+  mathematica, sympy)</code></pre>
+<p><strong>Sintaxe de cada alvo</strong> — verificada rodando cada exemplo abaixo dentro de um interpretador Python 3 com SymPy 1.12 de verdade (nunca só inspecionando a string; Mathematica não tem interpretador disponível neste ambiente, então sua própria verificação é só textual, contra um valor esperado conhecido — nunca confundida com prova de execução):</p>
+<table class="ref">
+<tr><th></th><th>Mathematica</th><th>SymPy</th></tr>
+<tr><td>Potência</td><td><code>r^6</code></td><td><code>r**6</code></td></tr>
+<tr><td>Multiplicação</td><td><code>M*r</code> (ou justaposição)</td><td><code>M*r</code> (sempre explícito — SymPy nunca aceita justaposição)</td></tr>
+<tr><td>Fração literal exata</td><td><code>1/2</code> (divisão exata entre inteiros já é o comportamento nativo de Mathematica)</td><td><code>Rational(1, 2)</code> (nunca <code>1/2</code> nu — entre dois <code>int</code> do Python isso já vira <code>float</code> antes do SymPy sequer ver a expressão)</td></tr>
+<tr><td>Funções conhecidas</td><td><code>Sin[x]</code>, <code>Cos[x]</code>, <code>Sqrt[x]</code>, <code>Exp[x]</code> (maiúscula, colchete)</td><td><code>sin(x)</code>, <code>cos(x)</code>, <code>sqrt(x)</code>, <code>exp(x)</code> (minúscula, parêntese)</td></tr>
+<tr><td>Nome de coordenada grega</td><td><code>theta</code> (identificador simples — nunca <code>\theta</code>, que não existe fora de LaTeX)</td><td><code>theta</code> (idem)</td></tr>
+</table>
+<p>Escalar (<code>kretschmann</code> de Schwarzschild), transcrição real dos dois alvos:</p>
+<pre><code>$ oderom export sympy kretschmann schwarzschild_ascii.od
+M, r = symbols('M r')
+48*M**2/r**6
+
+$ oderom export mathematica kretschmann schwarzschild_ascii.od
+48*M^2/r^6</code></pre>
+<p>O bloco SymPy vem com uma linha <code>symbols(...)</code> na frente, declarando toda variável livre que a expressão usa — a escolha deliberada deste projeto é que a saída seja <strong>autossuficiente</strong>: colada inteira numa sessão nova do Python (<code>from sympy import *</code>, e nada mais), ela roda sem passo de preparação separado. Mathematica não precisa disso — um identificador solto já é um símbolo válido lá, sem declaração prévia.</p>
+<p><strong>Tensor com várias componentes</strong> (<code>riemann</code>): uma atribuição por componente independente, cada uma um identificador único e válido — nunca notação de livro com índice em sobrescrito/subscrito, que não é sintaxe executável em nenhuma das duas ferramentas. SymPy separa por <code>_</code>; Mathematica por <code>$</code>, porque <code>_</code> ali é o operador de padrão <code>Blank</code>, reservado, não um separador comum:</p>
+<pre><code>$ oderom export sympy riemann schwarzschild_ascii.od
+M, r, theta = symbols('M r theta')
+R_t_r_t_r = 2*M/(-r**3)
+# 4 components by symmetry
+R_t_theta_t_theta = (M*r - 2*M**2)/r**2
+# 4 components by symmetry
+...
+# 15 independent components identically zero</code></pre>
+<p>A anotação "N components by symmetry" e a contagem final de componentes identicamente nulas — as mesmas anotações em inglês comum da seção 9.7, nunca matemática — aparecem como comentário de verdade na sintaxe do alvo (<code>#</code> em SymPy, <code>(* ... *)</code> em Mathematica), nunca como uma linha nua no meio do bloco: uma linha nua ali quebraria a execução assim que colada (<code>SyntaxError</code> em Python) — um bug real deste próprio round, encontrado rodando a saída de <code>riemann</code> num interpretador de verdade, não só olhando a string. Um resultado com índice contravariante (marcador de variância, 9.16) recebe o mesmo tratamento, com um segmento <code>up</code> a mais por índice levantado: <code>R_up_t_r</code> (SymPy), <code>R$up$t$r</code> (Mathematica).</p>
+<p><strong><code>geodesic</code>/<code>accel</code></strong>: como o lado esquerdo de cada equação é uma expressão inteira, nunca um identificador solto, <code>=</code> literal seria uma atribuição inválida na linguagem de destino (<code>SyntaxError: cannot assign to expression here</code> em Python) — outro bug real deste round, também só descoberto rodando a saída de verdade. Por isso <code>export</code> usa <code>Eq(esquerda, direita)</code> em SymPy (um objeto de verdade, pronto para <code>solve</code>/<code>dsolve</code>) e <code>esquerda == direita</code> em Mathematica, nunca <code>=</code>:</p>
+<pre><code>$ oderom export sympy geodesic schwarzschild_ascii.od --param tau
+M, r, tau, theta = symbols('M r tau theta')
+Eq((2*M*r*Derivative(Function('t')(tau), tau, 2) - 2*M*Derivative(
+  Function('r')(tau), tau, 1)*Derivative(Function('t')(tau), tau, 1)
+  - r**2*Derivative(Function('t')(tau), tau, 2))/(2*M*r - r**2), 0)
+...</code></pre>
+<p><strong>Função indeterminada</strong> (<code>f(r)</code>, seção 9.10) — o caso em que a tradução ingênua quebraria, porque não é troca de símbolo, é mapear um conceito (uma função ainda não especificada) para a construção equivalente de cada ferramenta: SymPy usa <code>Function('f')(r)</code>/<code>Derivative(Function('f')(r), r, 1)</code>; Mathematica usa <code>f[r]</code>/<code>f'[r]</code>, sua própria notação de linha:</p>
+<pre><code>$ oderom export sympy christoffel unknown_static_spherical.od
+r, theta = symbols('r theta')
+Gamma_up_t_t_r = -Rational(1, 2)*Derivative(Function('f')(r), r, 1)/(-Function('f')(r))
+...
+
+$ oderom export mathematica christoffel unknown_static_spherical.od
+Gamma$up$t$t$r = -1/2*f'[r]/(-f[r])
+...</code></pre>
+<p>Verificação de verdade (não só sintática): substituindo <code>f(r) = 1 - 2M/r</code> DENTRO do próprio SymPy, o Γ<sup>t</sup><sub>tr</sub> exportado de <code>unknown_static_spherical.od</code> se reduz a <code>M/(r² - 2Mr)</code> — exatamente o Γ<sup>t</sup><sub>tr</sub> conhecido de Schwarzschild, calculado de forma totalmente independente. O nome <code>f</code> nunca é pré-vinculado a uma variável Python (<code>Function('f')(...)</code> é sempre construído embutido, a cada uso) — necessário porque o mesmo nome pode aparecer como <code>Symbol</code> comum (coeficiente de Christoffel) e como <code>Function(...)</code> de outra variável (termo de velocidade de uma geodésica) dentro da mesma equação; pré-vincular colidiria os dois.</p>
+<div class="note">
+  <strong>Colisão com uma palavra reservada do alvo é detectada e documentada, nunca silenciosa.</strong> Um parâmetro ou coordenada chamado <code>E</code> (escala de energia, excentricidade — um nome plausível) colide com a constante de Euler tanto em Mathematica quanto em SymPy. <code>export</code> detecta a colisão contra a lista de nomes reservados de cada alvo (<code>E Pi I D N Gamma C K O</code> em Mathematica; palavras-chave do Python mais <code>I E pi oo zoo nan S N</code> em SymPy), renomeia (<code>E</code> &rarr; <code>E_</code> em SymPy, <code>E</code> &rarr; <code>E$</code> em Mathematica) e documenta a troca como comentário na própria saída — nunca emite algo que colidiria com a constante real, e nunca deixa o usuário descobrir sozinho por que o resultado está errado:
+  <pre><code>$ oderom export sympy scalar colisao.od
+E_, r = symbols('E_ r')
+2*E_/r**3
+# renamed `E` to `E_` -- collides with a reserved SymPy name</code></pre>
+</div>
+<p>No caderno/aplicativo, cada componente de um resultado <code>export</code> continua clicável individualmente (9.7) — o texto copiado é o código-fonte pronto daquela linha, nunca com o comentário misturado; a anotação (nota de simetria, de renomeação) aparece como legenda separada ao lado, exatamente como já acontece para qualquer outro resultado.</p>
+<p><strong>O que <code>export</code> não faz:</strong> não reimplementa nem re-simplifica nada — a árvore exportada é a mesma que o motor já normalizou, só muda de sintaxe; não produz LaTeX (já existe, <code>--target latex</code>); e, nesta rodada, só cobre os dois alvos simbólicos. Alvos numéricos (C++, Fortran, Julia) são rodadas futuras, de natureza diferente (gerar código para compilar/rodar, não para continuar manipulando simbolicamente) — não implementados aqui.</p>
+
+<!-- 10 -->
+
+<!-- 10 -->
+<h2>10. Exemplos completos</h2>
+<p>Os oito exemplos abaixo foram executados de verdade pela linha de comando (capítulo 11) — o mesmo motor de cálculo que o caderno usa (<code>oderom-cli::commands</code>/<code>oderom-components::curvature</code>) — e a saída abaixo foi copiada diretamente do terminal, não reescrita de memória. Os três primeiros arquivos são as próprias fixtures deste repositório (<code>oderom-cli/tests/fixtures/</code>); o quarto é uma métrica nova, escrita para esta seção e também executada; o quinto (<code>geodesic</code>), o sexto (<code>accel</code>), o sétimo (<code>einstein</code>) e o oitavo (<code>weyl</code>/<code>riccisquare</code>) reusam a métrica do primeiro (e, para <code>einstein</code>/<code>weyl</code>, também a do segundo). Um candidato do pedido original — um exemplo de holonomia — não entrou: como o capítulo 9.5 registra, não há consulta de holonomia na linguagem hoje, então não haveria um <code>.od</code> real para mostrar.</p>
+
+<h3>Exemplo 1 — Schwarzschild (<code>schwarzschild_ascii.od</code>)</h3>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r),
+  [r,r] = 1/(1 - 2*M/r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p><code>ricci</code>:</p>
+<pre><code>10 independent components identically zero</code></pre>
+<p><code>kretschmann</code>:</p>
+<pre><code>48*M^2/r^6</code></pre>
+<p>Demonstra a forma básica de uma declaração completa (variedade, fibrado, carta, métrica) e as cinco consultas na sua forma mais simples, com um só parâmetro (<code>M</code>). O Ricci nulo (solução de vácuo) ao lado de um Kretschmann não-nulo é o próprio ponto do exemplo: a variedade é curva mesmo onde o tensor de Ricci desaparece inteiro.</p>
+
+<h3>Exemplo 2 — Reissner-Nordström (<code>reissner_nordstrom.od</code>)</h3>
+<pre><code>manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -(1 - 2*M/r + Q^2/r^2),
+  [r,r] = 1/(1 - 2*M/r + Q^2/r^2),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}</code></pre>
+<p><code>kretschmann</code> (unicode, padrão):</p>
+<pre><code>(-96*M*Q^2*r + 48*M^2*r^2 + 56*Q^4)/r^8</code></pre>
+<p>a mesma consulta com <code>--target latex</code>:</p>
+<pre><code>\frac{-96 M Q^{2} r + 48 M^{2} r^{2} + 56 Q^{4}}{r^{8}}</code></pre>
+<p>Demonstra uma métrica de dois parâmetros (<code>M</code> e <code>Q</code>) — três termos em <code>f(r)</code> em vez de dois — e o alvo LaTeX produzindo <code>\frac{}{}</code>/expoentes reais a partir da mesma árvore. O resultado bate com a forma fechada do livro-texto, <code>48M²/r⁶ − 96MQ²/r⁷ + 56Q⁴/r⁸</code>, e com o teste de aceitação permanente deste repositório (<code>oderom-components/tests/reissner_nordstrom.rs</code>).</p>
+
+<h3>Exemplo 3 — esfera redonda S² (dimensão 2, curvatura não-nula)</h3>
+<pre><code>manifold S2 dim 2
+bundle TS2 on S2 dim 2
+chart standard on S2 coords (theta, phi)
+metric g on standard bundle TS2 {
+  [theta,theta] = 1,
+  [phi,phi] = sin(theta)^2
+}</code></pre>
+<p><code>ricci</code>:</p>
+<pre><code>Ricci[theta,theta] = 1
+Ricci[phi,phi] = sin(theta)^2
+1 independent component identically zero</code></pre>
+<p><code>scalar</code>:</p>
+<pre><code>2</code></pre>
+<p><code>kretschmann</code>:</p>
+<pre><code>4</code></pre>
+<p>Demonstra que a dimensão da variedade não é fixa em 4 — aqui é 2 — e que a dependência angular (<code>sin(theta)</code> num componente da métrica) pode ser a <em>única</em> fonte de curvatura, sem massa nem parâmetro nenhum: ao contrário dos dois exemplos anteriores, o Ricci aqui não é zero. Escalar de Ricci 2 (curvatura gaussiana 1) é o valor de livro-texto para a esfera unitária.</p>
+
+<h3>Exemplo 4 — conexão sem métrica (<code>connection_only.od</code>)</h3>
+<pre><code>manifold M dim 2
+bundle TM on M dim 2
+chart flat2 on M coords (x, y)
+connection Gamma on flat2 {
+  [x,y,y] = x
+}</code></pre>
+<p><code>riemann</code> (funciona, forma mista, sem baixar índice):</p>
+<pre><code>R[^x,y,x,y] = 1
+R[^x,y,y,x] = -1
+14 independent components identically zero</code></pre>
+<p><code>kretschmann</code> (recusa):</p>
+<pre><code>error: `kretschmann` needs a metric to invert (only a connection was declared)</code></pre>
+<p>Demonstra a porta de entrada alternativa <code>connection</code>, sem <code>metric</code> nem <code>bundle</code> algum, e o limite real dela: <code>christoffel</code>/<code>riemann</code>/<code>ricci</code> funcionam direto a partir de Γ, mas <code>kretschmann</code>/<code>scalar</code> — que precisam inverter uma métrica para subir índice — recusam com um erro específico em vez de travar ou adivinhar. É também o único exemplo em que <code>riemann</code> mostra a forma mista R<sup>a</sup><sub>bcd</sub> (componentes não agrupadas por simetria de tensor) em vez da forma totalmente covariante dos exemplos 1&ndash;3.</p>
+
+<h3>Exemplo 5 — a equação geodésica de Schwarzschild (<code>geodesic tau</code>)</h3>
+<p>Mesma métrica do exemplo 1 (<code>schwarzschild_ascii.od</code>); a consulta é <code>geodesic tau</code>, alvo <code>Unicode</code> (padrão) — quatro equações, uma por coordenada, na mesma ordem da carta (<code>t, r, theta, phi</code>):</p>
+<pre><code>(2*M*r*t''(tau) - 2*M*r'(tau)*t'(tau) - r^2*t''(tau))/(2*M*r - r^2) = 0
+(M*r^2*r'(tau)^2 - M*r^2*t'(tau)^2 + 2*M*r^3*r''(tau) - 4*M*r^4*sin(theta)^2*phi'(tau)^2
+  - 4*M*r^4*theta'(tau)^2 + 4*M^2*r*t'(tau)^2 + 4*M^2*r^3*sin(theta)^2*phi'(tau)^2
+  + 4*M^2*r^3*theta'(tau)^2 - 4*M^3*t'(tau)^2 - r^4*r''(tau) + r^5*sin(theta)^2*phi'(tau)^2
+  + r^5*theta'(tau)^2)/(2*M*r^3 - r^4) = 0
+(-r*sin(theta)*cos(theta)*phi'(tau)^2 + r*theta''(tau) + 2*r'(tau)*theta'(tau))/r = 0
+(r*sin(theta)*phi''(tau) + 2*r*cos(theta)*phi'(tau)*theta'(tau) + 2*sin(theta)*phi'(tau)*r'(tau))
+  /(r*sin(theta)) = 0</code></pre>
+<p>A mesma consulta com <code>--target latex</code> — mesmas quatro equações, só a segunda encarnação de cada coordenada (seção 9.11) muda de notação, de explícita para ponto:</p>
+<pre><code>\frac{(2 M r \ddot{t} - 2 M \dot{r} \dot{t} - r^{2} \ddot{t})}{(2 M r - r^{2})} = 0
+\frac{(-r \sin\left(\theta\right) \cos\left(\theta\right) \dot{\phi}^{2} + r \ddot{\theta} + 2 \dot{r} \dot{\theta})}{r} = 0</code></pre>
+<p>A primeira equação (a de <code>t</code>) pode ser conferida à mão a partir da própria saída de <code>christoffel</code> sobre a mesma métrica (exemplo 1): os únicos Γ<sup>t</sup><sub>bc</sub> não-nulos são Γ<sup>t</sup><sub>tr</sub> e Γ<sup>t</sup><sub>rt</sub> (iguais, por simetria dos dois índices baixos), ambos <code>-M/(2*M*r - r^2)</code>. Substituindo na forma fechada ẍ<sup>t</sup> + Γ<sup>t</sup><sub>bc</sub>ẋ<sup>b</sup>ẋ<sup>c</sup> = 0 com só esses dois termos (<code>ẗ + 2·Γ<sup>t</sup><sub>tr</sub>·ṫ·ṙ = 0</code>) e pondo sobre o mesmo denominador dá exatamente a primeira linha acima — a mesma verificação que o teste de aceitação deste round faz por código (<code>oderom-components/tests/schwarzschild.rs</code>, <code>geodesic_of_schwarzschild_matches_a_hand_assembly_from_this_runs_own_christoffel</code>), nunca contra um valor de livro-texto decorado.</p>
+<p>Demonstra a distinção central da seção 9.11 dentro de uma equação real: o denominador de cada equação (o coeficiente de Christoffel) permanece escrito na coordenada livre de sempre (<code>r</code>, <code>theta</code>), a mesma forma que a métrica do exemplo 1 usa; os termos de velocidade/aceleração (<code>t'(tau)</code>/<code>\dot t</code>, etc.) são a segunda encarnação, função do parâmetro afim — as duas convivendo na mesma equação sem nunca se confundir. Nenhuma das quatro equações é resolvida aqui — a consulta escreve, não integra.</p>
+
+<h3>Exemplo 6 — a mesma geodésica resolvida para a aceleração (<code>accel tau</code>)</h3>
+<p>Mesma métrica do exemplo 1; a consulta é <code>accel tau</code> em vez de <code>geodesic tau</code> — as mesmas quatro equações do exemplo 5, agora com a segunda derivada de cada coordenada isolada à esquerda:</p>
+<pre><code>t''(tau) = 2*M*r'(tau)*t'(tau)/(2*M*r - r^2)
+r''(tau) = (-M*r^2*r'(tau)^2 + M*r^2*t'(tau)^2 + 4*M*r^4*sin(theta)^2*phi'(tau)^2
+  + 4*M*r^4*theta'(tau)^2 - 4*M^2*r*t'(tau)^2 - 4*M^2*r^3*sin(theta)^2*phi'(tau)^2
+  - 4*M^2*r^3*theta'(tau)^2 + 4*M^3*t'(tau)^2 - r^5*sin(theta)^2*phi'(tau)^2
+  - r^5*theta'(tau)^2)/(2*M*r^3 - r^4)
+theta''(tau) = (r*sin(theta)*cos(theta)*phi'(tau)^2 - 2*r'(tau)*theta'(tau))/r
+phi''(tau) = (-2*r*cos(theta)*phi'(tau)*theta'(tau) - 2*sin(theta)*phi'(tau)*r'(tau))
+  /(r*sin(theta))</code></pre>
+<p>A mesma consulta com <code>--target latex</code> — ponto nos dois lados do <code>=</code>, parâmetro implícito:</p>
+<pre><code>\ddot{t} = \frac{2 M \dot{r} \dot{t}}{(2 M r - r^{2})}
+\ddot{\theta} = \frac{(r \sin\left(\theta\right) \cos\left(\theta\right) \dot{\phi}^{2} - 2 \dot{r} \dot{\theta})}{r}</code></pre>
+<p>Conferindo a equação de <code>t</code> à mão: multiplicando <code>t''(tau) = 2*M*r'(tau)*t'(tau)/(2*M*r - r^2)</code> de volta pelo denominador <code>(2*M*r - r^2)</code> e movendo tudo para o mesmo lado dá <code>2*M*r*t'' - r^2*t'' - 2*M*r'*t' = 0</code>, que é exatamente o exemplo 5 reorganizado (<code>2*M*r*t''(tau) - 2*M*r'(tau)*t'(tau) - r^2*t''(tau) = 0</code>, sobre o mesmo denominador) — a mesma verificação, por código, que <code>oderom-components/tests/schwarzschild.rs</code>'s <code>accel_of_schwarzschild_reproduces_geodesic_when_multiplied_back</code> faz para as quatro coordenadas, nunca só a de <code>t</code>. Note que o coeficiente de <code>t''</code>/<code>r''</code>/... é sempre exatamente 1 aqui (seção 9.12 explica por quê) — a equação radial parece mais complicada só porque o coeficiente de Christoffel que ela isola contra, <code>2*M*r^3 - r^4</code>, não é um monômio simples, não porque o coeficiente da própria segunda derivada mude.</p>
+
+<h3>Exemplo 7 — o tensor de Einstein: vácuo contra eletrovácuo (<code>einstein</code>)</h3>
+<p>Mesma métrica do exemplo 1, Schwarzschild — solução de vácuo:</p>
+<pre><code>10 independent components identically zero</code></pre>
+<p>Mesma métrica do exemplo 2, Reissner-Nordström — não é vácuo (o campo elétrico é a fonte), e <code>einstein</code> mostra isso diretamente, quatro componentes reais e não-nulas:</p>
+<pre><code>G[t,t] = (2*M*Q^2*r - Q^2*r^2 - Q^4)/(-r^6)
+G[r,r] = Q^2/(2*M*r^3 - Q^2*r^2 - r^4)
+G[theta,theta] = Q^2/r^2
+G[phi,phi] = Q^2*sin(theta)^2/r^2
+6 independent components identically zero</code></pre>
+<p>Comparando com <code>ricci</code> e <code>scalar</code> na mesma métrica (capítulo 9.5): <code>scalar</code> dá <code>0</code>, e as quatro componentes de <code>ricci</code> acima são <strong>byte a byte idênticas</strong> às de <code>einstein</code> — exatamente o que a seção 9.13 antecipa (G<sub>ab</sub> = R<sub>ab</sub> &minus; ½g<sub>ab</sub>·0 = R<sub>ab</sub>). Não é coincidência de arredondamento nem de forma de exibição: é a fórmula colapsando de verdade porque o escalar desta métrica é zero.</p>
+<p>Demonstra ao mesmo tempo o teste de ouro (vácuo dá zero) e o caso não-trivial (eletrovácuo não dá), e a verificação mais direta de todas — comparar contra as próprias saídas de <code>ricci</code>/<code>scalar</code> do programa para a mesma métrica, nunca contra um valor de livro-texto copiado à mão.</p>
+
+<h3>Exemplo 8 — o tensor de Weyl e um invariante escalar (<code>weyl</code>, <code>riccisquare</code>)</h3>
+<p>Mesma métrica do exemplo 1, Schwarzschild — vácuo, então Weyl tem que igualar Riemann byte a byte:</p>
+<pre><code>C[t,r,t,r] = 2*M/(-r^3)
+  (4 components by symmetry)
+C[t,theta,t,theta] = (M*r - 2*M^2)/r^2
+  (4 components by symmetry)
+C[t,phi,t,phi] = (M*r*sin(theta)^2 - 2*M^2*sin(theta)^2)/r^2
+  (4 components by symmetry)
+C[r,theta,r,theta] = M/(2*M - r)
+  (4 components by symmetry)
+C[r,phi,r,phi] = M*sin(theta)^2/(2*M - r)
+  (4 components by symmetry)
+C[theta,phi,theta,phi] = 2*M*r*sin(theta)^2
+  (4 components by symmetry)
+15 independent components identically zero</code></pre>
+<p>Comparando com <code>riemann</code> na mesma métrica (capítulo 9.5): as seis componentes acima, os mesmos coeficientes, a mesma contagem de zero — <strong>idêntico</strong>, nunca só parecido.</p>
+<p>Mesma métrica do exemplo 2, Reissner-Nordström — não é vácuo, então Weyl difere de Riemann de verdade:</p>
+<pre><code>C[t,r,t,r] = (-2*M*r + 2*Q^2)/r^4
+  (4 components by symmetry)
+C[r,theta,r,theta] = (-M*r + Q^2)/(-2*M*r + Q^2 + r^2)
+  (4 components by symmetry)
+15 independent components identically zero</code></pre>
+<p><code>riccisquare</code> na mesma métrica:</p>
+<pre><code>4*Q^4/r^8</code></pre>
+<p>A barreira de dimensão, no arquivo 2D deste próprio repositório (<code>hyperbolic_plane.od</code>, capítulo 9.2):</p>
+<pre><code>$ oderom weyl hyperbolic_plane.od
+error: the Weyl tensor is not defined in 2 dimensions (the standard
+  formula's 1/(n-2) term is undefined at n=2)</code></pre>
+<p>Demonstra a seção 9.15 inteira num só exemplo: o teste de ouro em vácuo (Weyl = Riemann), o caso genuinamente não-trivial (Reissner-Nordström, Weyl ≠ Riemann, invariante não-nulo), e a recusa limpa por dimensão — nunca um valor calculado às cegas onde a matemática não permite.</p>
+
+<!-- 11 -->
+<h2>11. Uso pela linha de comando</h2>
+<p>Existem <strong>dois</strong> binários de linha de comando, separados entre si e do aplicativo de caderno: <code>oderom</code> (execução única, um comando por chamada de processo) e <code>oderom-repl</code> (sessão interativa, de longa duração). Ambos usam a mesma gramática do capítulo 9 e o mesmo motor de cálculo do caderno — nenhuma construção da linguagem muda.</p>
+
+<h3>11.1 <code>oderom</code> — execução única</h3>
+<p>A mensagem de uso real (<code>oderom-cli/src/error.rs</code>, <code>CliError::Usage</code>):</p>
+<pre><code>usage: oderom canon [--prelude PATH] "&lt;expression&gt;"
+   or: oderom {christoffel|riemann|ricci|scalar|kretschmann|einstein|
+       riccisquare|gaussbonnet|weyl|weylsquare} FILE
+       [--metric NAME | --connection NAME]
+       [--target unicode|latex|json|mathematica|sympy]
+       [--max-lines N] [--max-nodes N] [--max-denominator-degree N]
+       [--timeout SECONDS]
+   or: oderom {geodesic|accel} FILE --param NAME
+       [--metric NAME | --connection NAME]
+       [--target unicode|latex|json|mathematica|sympy]
+       [--max-lines N] [--max-nodes N] [--max-denominator-degree N]
+       [--timeout SECONDS]
+   or: oderom export {mathematica|sympy} {christoffel|riemann|ricci|
+       scalar|kretschmann|geodesic|accel|einstein|riccisquare|
+       gaussbonnet|weyl|weylsquare} FILE
+       [--metric NAME | --connection NAME] [--param NAME]
+       [--max-nodes N] [--max-denominator-degree N] [--timeout SECONDS]
+   or: oderom load NAME</code></pre>
+<p>Uso típico, com uma das dez consultas de componentes/escalar do capítulo 9.5 e um arquivo <code>.od</code>:</p>
+<pre><code>oderom kretschmann minha_metrica.od
+oderom riemann minha_metrica.od --metric g2 --target latex
+oderom einstein minha_metrica.od
+oderom weyl minha_metrica.od
+oderom riccisquare minha_metrica.od</code></pre>
+<p><code>geodesic</code>/<code>accel</code> (seções 9.11/9.12) são as únicas duas das doze com uma flag própria — <code>--param</code>, obrigatória, o nome do parâmetro afim (o <code>PARÂMETRO</code> da gramática de dentro do caderno, aqui como flag em vez de segundo identificador posicional):</p>
+<pre><code>oderom geodesic schwarzschild_ascii.od --param tau
+oderom accel schwarzschild_ascii.od --param tau
+oderom accel schwarzschild_ascii.od --param tau --target latex</code></pre>
+<p><code>--timeout</code> tem padrão de 30s (<code>DEFAULT_TIMEOUT</code>, <code>commands.rs</code>). Cada estágio do cálculo (inverter a métrica, Christoffel, Riemann, ..., montar a equação geodésica) é anunciado em <code>stderr</code> conforme começa — se o tempo esgotar, a última linha anunciada é exatamente o estágio em andamento. <code>--max-nodes</code> (padrão 20000) e <code>--max-denominator-degree</code> (padrão 30) são guardas independentes de tamanho de árvore, verificadas a cada estágio.</p>
+<p><code>oderom canon [--prelude PATH] "expressão"</code> é um terceiro modo, para o nível abstrato do Marco 1 (contração de índices, <code>head</code>/<code>symmetry</code> do capítulo 9.3) — separado das doze consultas de curvatura, opera sobre <code>prelude.od</code> por padrão.</p>
+<p><code>oderom load NAME</code> é um quarto modo, sem <code>FILE</code>: imprime as declarações de uma métrica conhecida da galeria (capítulo 13) diretamente em <code>stdout</code>, como um arquivo <code>.od</code> completo e válido — não uma construção da gramática do capítulo 9, só mais um jeito de começar um arquivo sem digitá-lo à mão. Compõe normalmente com qualquer outra consulta via redirecionamento:</p>
+<pre><code>oderom load antidesitter &gt; antidesitter.od
+oderom scalar antidesitter.od
+-12*H^2</code></pre>
+<p>Um nome desconhecido falha e lista, na própria mensagem de erro, todos os nomes conhecidos:</p>
+<pre><code>$ oderom load kerr
+error: unknown gallery entry `kerr` (known: desitter, antidesitter, frw,
+       schwarzschild, reissnernordstrom)</code></pre>
+
+<h3>11.2 <code>oderom-repl</code> — sessão interativa</h3>
+<p>Comandos reais, exatamente como o REPL os lista (<code>oderom-repl/src/main.rs</code>): <code>:load :reload :defs :entries :recompute :save :timeout :quit</code>. Uma linha sem <code>:</code> na frente é uma consulta (capítulo 9.5), executada imediatamente contra o arquivo carregado. Transcrição real de uma sessão:</p>
+<pre><code>$ oderom-repl
+ODEROM REPL. :load &lt;file.od&gt; to start, :quit or Ctrl+D to leave.
+oderom&gt; :load schwarzschild_ascii.od
+ok: 2 definition(s), 9ms
+oderom&gt; christoffel
+inverting the metric...
+computing Christoffel symbols...
+[1] christoffel -- [OK] (147ms)
+Gamma[^t,t,r] = -M/(2*M*r - r^2)
+...
+oderom&gt; :entries
+[1] christoffel -- [OK] (147ms)</code></pre>
+<p><code>:reload</code> relê o mesmo arquivo do disco (útil depois de editá-lo num editor externo) e marca como obsoletas as entradas que dependiam do que mudou — mesmo princípio de obsolescência do capítulo 5. <code>:recompute &lt;n&gt;</code> ou <code>:recompute stale</code> recalcula uma entrada específica ou todas as obsoletas.</p>
+
+<h3>11.3 Cancelamento e limite de tempo: os dois binários se comportam diferente</h3>
+<p>Esta é a diferença real, verificada rodando os dois contra a mesma métrica que nunca termina sozinha (<code>g_tt</code>/<code>g_rr</code> não recíprocos — o mesmo caso que motivou o cancelamento no caderno, capítulo 6):</p>
+<p><strong><code>oderom</code> (execução única):</strong> <code>--timeout</code> encerra o <em>processo inteiro</em> quando esgota, com uma mensagem nomeando o estágio em andamento:</p>
+<pre><code>$ oderom kretschmann metrica_nao_reciproca.od --timeout 3
+inverting the metric...
+computing Christoffel symbols...
+computing the Riemann tensor (mixed)...
+error: timed out after 3s -- last stage in progress:
+  `computing the Riemann tensor (mixed)`</code></pre>
+<p>Não há como continuar depois disso — não há "depois", já que cada chamada do binário é um cálculo só. O processo termina; se o cálculo estivesse rodando numa thread em segundo plano, ela morre junto com o processo, não por ter sido avisada para parar.</p>
+<p><strong><code>oderom-repl</code> (sessão longa):</strong> <code>Ctrl+C</code> (ou <code>:timeout</code> esgotando, mesmo padrão de 30s) cancela só a consulta em andamento — o processo continua de pé, pronto para a próxima consulta, exatamente como o caderno nunca perde a janela por causa de um bloco cancelado (capítulo 6):</p>
+<pre><code>oderom&gt; :timeout 3
+timeout set to 3s
+oderom&gt; kretschmann
+inverting the metric...
+computing Christoffel symbols...
+timed out after 3s -- cancelling...
+[1] kretschmann -- [CANCELLED]
+oderom&gt; scalar
+inverting the metric...
+computing Christoffel symbols...
+timed out after 3s -- cancelling...
+[2] scalar -- [CANCELLED]</code></pre>
+<p>A segunda consulta, depois da primeira ser cancelada, roda normalmente — a sessão sobrevive. É o mesmo mecanismo de cancelamento profundo do caderno (<code>oderom_expr::run_cancellable</code>, verifica dentro do próprio laço de normalização, não só entre componentes) — o REPL e o caderno passam pela mesma função <code>oderom-session::run_query</code>; o binário <code>oderom</code> autônomo não passa por ela, só por um limite de parede sem cancelamento profundo, por isso a diferença.</p>
+
+<!-- 12 -->
+<h2>12. Referência rápida</h2>
+<h3>Teclas de execução</h3>
+<table class="ref">
+  <tr><th>Tecla</th><th>Ação</th></tr>
+  <tr><td><span class="kbd">Shift</span>+<span class="kbd">Enter</span></td><td>Executa; foco vai para o próximo bloco (cria um se for o último).</td></tr>
+  <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span></td><td>Executa; foco permanece no bloco.</td></tr>
+  <tr><td><span class="kbd">Alt</span>+<span class="kbd">Enter</span></td><td>Executa; insere um bloco novo abaixo e foca nele.</td></tr>
+</table>
+<h3>Estados de bloco</h3>
+<table class="ref">
+  <tr><th>Indicador</th><th>Estado</th></tr>
+  <tr><td><code>[ ]</code></td><td>Nunca executado</td></tr>
+  <tr><td><code>[n]</code></td><td>Executado, atual (n = ordem de execução)</td></tr>
+  <tr><td><code>[n]</code> âmbar + tarja + <code>&#8635;</code></td><td>Executado, obsoleto</td></tr>
+  <tr><td>—</td><td>Em execução (cancelável)</td></tr>
+  <tr><td>—</td><td>Cancelado</td></tr>
+</table>
+<h3>Construções da linguagem</h3>
+<table class="ref">
+<tr><th>Construção</th><th>Sintaxe</th></tr>
+<tr><td><code>manifold</code></td><td><code>manifold NOME dim N</code></td></tr>
+<tr><td><code>bundle</code></td><td><code>bundle NOME on VARIEDADE dim N</code></td></tr>
+<tr><td><code>head</code> (abstrato, Marco 1)</td><td><code>head NOME : FIBRADO[*], ... [symmetry antisymmetric|symmetric|CICLOS+SINAL]</code></td></tr>
+<tr><td><code>chart</code></td><td><code>chart NOME on VARIEDADE coords (c1, c2, ...)</code></td></tr>
+<tr><td><code>metric</code></td><td><code>metric NOME on CARTA bundle FIBRADO { [i,j] = EXPR, ... }</code></td></tr>
+<tr><td><code>connection</code></td><td><code>connection NOME on CARTA { [i,j,k] = EXPR, ... }</code></td></tr>
+<tr><td>alias (9.9)</td><td><code>NOME := EXPR</code> — açúcar sintático, expandido antes do motor; uso é <code>NOME</code> sem parênteses, nunca <code>NOME(...)</code> (sempre chamada de função)</td></tr>
+<tr><td>função indeterminada (9.10)</td><td><code>f(r)</code>, <code>h(t, r)</code> — símbolo opaco, nunca avaliado; representa e deriva, nunca resolve</td></tr>
+<tr><td>derivada (9.10)</td><td><code>f'(r)</code>, <code>f''(r)</code> (uma variável); <code>h_{t}(t,r)</code>, <code>h_{t,r}(t,r)</code> (subscrito, várias variáveis)</td></tr>
+<tr><td>nomes reservados (9.10)</td><td><code>tan cot sec csc tanh coth sech csch asin arcsin acos arccos atan arctan asinh arcsinh acosh arccosh atanh arctanh log ln sqrt atan2 abs</code> — rejeitados com parênteses, nunca aceitos como função indeterminada</td></tr>
+<tr><td><code>christoffel</code></td><td><code>christoffel [ALVO]</code> &rarr; Γ<sup>a</sup><sub>bc</sub></td></tr>
+<tr><td><code>riemann</code></td><td><code>riemann [ALVO]</code> &rarr; R<sub>abcd</sub> (métrica) ou R<sup>a</sup><sub>bcd</sub> (conexão pura)</td></tr>
+<tr><td><code>ricci</code></td><td><code>ricci [ALVO]</code> &rarr; R<sub>bd</sub></td></tr>
+<tr><td><code>scalar</code></td><td><code>scalar [ALVO]</code> &rarr; R (precisa de métrica)</td></tr>
+<tr><td><code>kretschmann</code></td><td><code>kretschmann [ALVO]</code> &rarr; R<sub>abcd</sub>R<sup>abcd</sup> (precisa de métrica)</td></tr>
+<tr><td><code>geodesic</code> (9.11)</td><td><code>geodesic PARÂMETRO</code> ou <code>geodesic ALVO PARÂMETRO</code> &rarr; ẍ<sup>a</sup> + Γ<sup>a</sup><sub>bc</sub>ẋ<sup>b</sup>ẋ<sup>c</sup> = 0, uma por coordenada (funciona a partir de <code>connection</code>); parâmetro não pode coincidir com coordenada nem variável livre da métrica/conexão</td></tr>
+<tr><td><code>accel</code> (9.12)</td><td><code>accel PARÂMETRO</code> ou <code>accel ALVO PARÂMETRO</code> &rarr; ẍ<sup>a</sup> = f<sup>a</sup>(x, ẋ), a mesma equação de <code>geodesic</code> resolvida para a aceleração (funciona a partir de <code>connection</code>); mesma regra de colisão de <code>geodesic</code></td></tr>
+<tr><td><code>einstein</code> (9.13)</td><td><code>einstein [ALVO]</code> &rarr; G<sub>ab</sub> = R<sub>ab</sub> &minus; ½g<sub>ab</sub>R (precisa de métrica)</td></tr>
+<tr><td><code>riccisquare</code> (9.14)</td><td><code>riccisquare [ALVO]</code> &rarr; R<sub>ab</sub>R<sup>ab</sup> (precisa de métrica)</td></tr>
+<tr><td><code>gaussbonnet</code> (9.14)</td><td><code>gaussbonnet [ALVO]</code> &rarr; R<sub>abcd</sub>R<sup>abcd</sup> &minus; 4R<sub>ab</sub>R<sup>ab</sup> + R² (precisa de métrica)</td></tr>
+<tr><td><code>weyl</code> (9.15)</td><td><code>weyl [ALVO]</code> &rarr; C<sub>abcd</sub>, o tensor de Weyl (precisa de métrica; recusa em dimensão 2)</td></tr>
+<tr><td><code>weylsquare</code> (9.15)</td><td><code>weylsquare [ALVO]</code> &rarr; C<sub>abcd</sub>C<sup>abcd</sup> (precisa de métrica; recusa em dimensão 2)</td></tr>
+<tr><td>marcador de variância (9.16)</td><td>sufixo opcional em <code>riemann</code>/<code>ricci</code>/<code>einstein</code>/<code>weyl</code>: <code>riemann [up,down,down,down]</code>, <code>ricci ALVO [up,up]</code> — um <code>up</code>/<code>down</code> por índice do tensor, sempre depois do alvo; exige métrica; recusa em <code>christoffel</code> (não é tensor) e nos cinco escalares (sem índice)</td></tr>
+<tr><td><code>export</code> (9.17)</td><td><code>export mathematica QUERY</code> ou <code>export sympy QUERY</code>, envolvendo qualquer uma das doze consultas acima (com marcador de variância ou não) &rarr; a mesma saída traduzida para a sintaxe de Mathematica/SymPy; funciona no caderno e na CLI (<code>oderom export {mathematica|sympy} COMANDO FILE</code>); alvo desconhecido ou consulta desconhecida são erro claro; colisão com palavra reservada do alvo (<code>E</code>, <code>Pi</code>, <code>lambda</code>, ...) é renomeada e documentada como comentário</td></tr>
+<tr><td><code>load</code> (11.1, 13)</td><td>não é construção da gramática — botão Galeria no caderno (cola blocos) ou <code>oderom load NAME</code> na CLI (imprime em stdout); nomes: <code>desitter antidesitter frw schwarzschild reissnernordstrom</code></td></tr>
+<tr><td>operadores</td><td><code>+ - * / ^n</code> (n inteiro), justaposição = produto</td></tr>
+<tr><td>funções</td><td><code>sin(x)</code>, <code>cos(x)</code>, <code>exp(x)</code>, <code>sinh(x)</code>, <code>cosh(x)</code> — únicas aceitas hoje</td></tr>
+</table>
+
+<!-- 13 -->
+<h2>13. A galeria de espaços-tempo</h2>
+<p>A galeria é uma lista de métricas conhecidas que podem ser carregadas no caderno sem digitá-las à mão. O botão <strong>Galeria</strong>, no alto da janela (capítulo 3), abre um painel com cada entrada disponível, seu nome, uma linha descrevendo o espaço-tempo e o invariante de curvatura que o caracteriza. Clicar em uma entrada carrega essa métrica.</p>
+<div class="note">
+  <strong>Carregar cola texto, não executa nada.</strong> <code>load</code> insere as declarações da métrica escolhida como blocos novos, editáveis, ao final do caderno — exatamente o texto que um exemplo digitado à mão teria, nunca uma métrica opaca por trás de um botão. Nada é executado automaticamente (capítulo 3, "nada recalcula sozinho"); os blocos aparecem como <code>[ ]</code>, prontos para <span class="kbd">Shift</span>+<span class="kbd">Enter</span>. Blocos já existentes no caderno nunca são tocados.
+</div>
+<p>Toda métrica traz parâmetros simbólicos (<code>M</code>, <code>H</code>, <code>a</code>, <code>Q</code>, ...). Fixar um valor não precisa de nenhum mecanismo novo: edite o texto colado diretamente, ou declare um alias em um bloco próprio (capítulo 9.9) — por exemplo, <code>M := 1</code> antes de usar a métrica.</p>
+<p>Cada entrada da galeria é também um teste de aceitação do motor: sua curvatura foi computada e conferida contra um resultado fechado conhecido antes de entrar na lista (ver a suíte de testes de <code>oderom-notebook</code> e <code>oderom-components</code>). Uma galeria que carregasse métricas sem computar corretamente seria pior que nenhuma galeria — por isso a lista abaixo é deliberadamente pequena: só entram métricas verificadas.</p>
+<table class="ref">
+<tr><th>Nome</th><th>O que é</th><th>Invariante verificado</th></tr>
+<tr><td><code>desitter</code></td><td>De Sitter, fatiamento plano (curvatura constante positiva)</td><td>R = 12H² (constante); tensor de Weyl identicamente nulo</td></tr>
+<tr><td><code>antidesitter</code></td><td>Anti-de Sitter, coordenadas de Poincaré (curvatura constante negativa)</td><td>R = &minus;12H² (constante); R<sub>ab</sub> = &minus;3H²g<sub>ab</sub></td></tr>
+<tr><td><code>frw</code></td><td>Friedmann-Robertson-Walker espacialmente plano, fator de escala a(t) genérico</td><td>R = 6(a''(t)/a(t) + a'(t)²/a(t)²)</td></tr>
+<tr><td><code>schwarzschild</code></td><td>Vácuo, estático, simétrico esférico</td><td>R<sub>ab</sub> = 0; Kretschmann = 48M²/r&#8310;</td></tr>
+<tr><td><code>reissnernordstrom</code></td><td>Simétrico esférico, carregado (eletrovácuo — não é vácuo puro)</td><td>R = 0, mas R<sub>ab</sub> &ne; 0 (traço nulo, tensor de Ricci não)</td></tr>
+</table>
+<p>A entrada <code>frw</code> merece nota à parte: <code>a(t)</code> é uma função indeterminada (capítulo 9.10) usada diretamente dentro de um componente da métrica, não apenas dentro de uma equação de geodésica como em exemplos anteriores. O motor deriva Γ, R<sub>ab</sub> e R corretamente em termos de <code>a(t)</code>, <code>a'(t)</code> e <code>a''(t)</code> sem que o usuário precise dizer o que <code>a(t)</code> é.</p>
+<div class="note">
+  <strong>A restrição a métricas diagonais não existe mais no motor</strong> (ver <code>DESIGN-M2.md</code>, seção "D-M2.1 revisitada"). A inversão da métrica hoje detecta a estrutura de <code>g</code> em três níveis — diagonal (caminho rápido inalterado), diagonal por blocos (cada bloco desacoplado invertido isoladamente, ex.: o bloco 2×2 g<sub>tφ</sub> de Kerr) e geral (adjunta/cofatores) — e verifica <code>g<sub>ab</sub>g<sup>bc</sup> = δ<sup>a</sup><sub>c</sub></code> antes de aceitar o resultado. <code>ComponentError::NonDiagonalMetric</code> continua existindo como o erro que a função interna de caminho rápido (<code>metric_inverse_diagonal</code>) devolve se chamada diretamente numa métrica não-diagonal, mas não é mais o que o motor faz para uma consulta real.
+  <p style="margin-top:8px">Ainda assim, <strong>Kerr e Gödel continuam fora da galeria — e não porque a inversão falhe.</strong> Para os dois, a inversão da métrica em si é rápida e correta (microssegundos a poucas dezenas de milissegundos; nenhuma métrica de nenhum dos dois recusa ou trava nesse passo). O que bloqueia cada um é a simplificação da curvatura resultante esbarrando num limite do normalizador de <code>oderom-expr</code>, não a inversão: o Christoffel/Riemann do Kerr não terminam em tempo prático contra o denominador genuinamente bivariado da métrica; o escalar de Ricci de Gödel calcula para um valor algebricamente correto mas que o normalizador não reduz à forma fechada. Nenhuma entrada de galeria entra sem um teste de curvatura verificado de verdade — por isso os dois ficam de fora, documentados (<code>DESIGN-RATIONAL-FORM.md</code>, seção 7, tem o detalhe completo de cada limite), sem previsão de quando isso muda.</p>
+</div>
+<p>Pela linha de comando (capítulo 11.1), <code>oderom load NAME</code> dá acesso ao mesmo catálogo: imprime as declarações da métrica em <code>stdout</code>, como um arquivo <code>.od</code> completo, em vez de colar blocos — a diferença faz sentido, já que a CLI não tem lista de blocos para colar, mas o catálogo é exatamente um só (<code>oderom-cli/src/gallery.rs</code>), compartilhado pelas duas superfícies. Redirecionado para um arquivo, o resultado funciona com qualquer outra consulta sem edição:</p>
+<pre><code>oderom load schwarzschild &gt; schwarzschild.od
+oderom kretschmann schwarzschild.od</code></pre>
+<p>O REPL (capítulo 11.2) não ganhou um comando próprio nesta rodada: seu <code>:load &lt;arquivo.od&gt;</code> carrega um arquivo do disco para a sessão, não um nome da galeria — quem usa o REPL e quer uma métrica da galeria hoje precisa passar pelo binário <code>oderom</code> primeiro (<code>oderom load NAME &gt; arquivo.od</code>, depois <code>:load arquivo.od</code> no REPL). Uma extensão de <code>:load</code> para aceitar também um nome da galeria é trabalho razoável para uma rodada futura, não incluído aqui.</p>
+
+<p style="margin-top:40px; font-size:8.5pt; color:#9a9a95; border-top:1px solid #e4e2da; padding-top:8px;">
+ODEROM &middot; manual do usuário. Todos os capítulos verificados contra o código-fonte e exemplos executados nesta revisão.
+</p>
+
+</body>
+</html>

@@ -13,8 +13,9 @@
 use crate::error::ComponentError;
 use oderom_core::{Bsgs, HeadId, Registry, SignedPerm};
 use oderom_expr::Expr;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 pub(crate) type IndexTuple = SmallVec<[u8; 4]>;
 
@@ -131,5 +132,70 @@ impl ComponentTensor {
     /// components) -- not the number of raw index tuples.
     pub fn independent_len(&self) -> usize {
         self.independent.len()
+    }
+
+    /// A hash of `self`'s content, stable regardless of the order its
+    /// independent components were `set` in -- same reasoning and same
+    /// caveats as [`crate::grid::Grid::canonical_hash`] (sorts by index
+    /// first; `FxHashMap` itself has no usable `Hash`). `head` (a
+    /// `HeadId`, an index into whichever `Registry` happens to own it,
+    /// never stable across two separately-built `Registry`s) is
+    /// deliberately excluded -- this hash is meant to answer "does this
+    /// tensor's *content* match another's", including across two
+    /// `Model`s from two different `evaluate_definitions` calls, where
+    /// comparing raw `HeadId`s would be comparing unrelated numbers.
+    pub fn canonical_hash(&self) -> u64 {
+        let mut entries: Vec<(&IndexTuple, &Expr)> = self.independent.iter().collect();
+        entries.sort_by(|(a, _), (b, _)| a.as_slice().cmp(b.as_slice()));
+        let mut hasher = FxHasher::default();
+        for (idx, expr) in entries {
+            idx.as_slice().hash(&mut hasher);
+            expr.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oderom_core::{Perm, SlotSig, Variance};
+
+    /// A symmetric rank-2 head (same shape a `metric` block declares),
+    /// deliberately not the full Schwarzschild/RN fixture setup
+    /// elsewhere in this crate -- this test only needs somewhere to
+    /// `set` two components and doesn't care what they mean physically.
+    fn symmetric_rank2_head() -> (Registry, HeadId) {
+        let mut registry = Registry::new();
+        let manifold = registry.declare_manifold("M", 2).unwrap();
+        let tm = registry.declare_bundle("TM", manifold, 2).unwrap();
+        let co = SlotSig { bundle: tm, variance: Variance::Co, dim: 2 };
+        let slots: SmallVec<[SlotSig; 4]> = smallvec::smallvec![co, co];
+        let head = registry.declare_head("g", slots, vec![SignedPerm::new(Perm::transposition(2, 0, 1), 1)]).unwrap();
+        (registry, head)
+    }
+
+    #[test]
+    fn canonical_hash_is_independent_of_insertion_order() {
+        let (registry, head) = symmetric_rank2_head();
+        let mut forward = ComponentTensor::new(head);
+        forward.set(&registry, &[0, 0], Expr::int(1)).unwrap();
+        forward.set(&registry, &[1, 1], Expr::int(2)).unwrap();
+
+        let mut backward = ComponentTensor::new(head);
+        backward.set(&registry, &[1, 1], Expr::int(2)).unwrap();
+        backward.set(&registry, &[0, 0], Expr::int(1)).unwrap();
+
+        assert_eq!(forward.canonical_hash(), backward.canonical_hash());
+    }
+
+    #[test]
+    fn canonical_hash_differs_for_different_content() {
+        let (registry, head) = symmetric_rank2_head();
+        let mut a = ComponentTensor::new(head);
+        a.set(&registry, &[0, 0], Expr::int(1)).unwrap();
+        let mut b = ComponentTensor::new(head);
+        b.set(&registry, &[0, 0], Expr::int(2)).unwrap();
+        assert_ne!(a.canonical_hash(), b.canonical_hash());
     }
 }

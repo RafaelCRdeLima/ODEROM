@@ -24,6 +24,14 @@ pub fn substitute(expr: &Expr, var: &str, replacement: &Expr) -> Expr {
         Expr::Pow(base, n) => Expr::Pow(Box::new(substitute(base, var, replacement)), *n),
         Expr::Sin(inner) => Expr::Sin(Box::new(substitute(inner, var, replacement))),
         Expr::Cos(inner) => Expr::Cos(Box::new(substitute(inner, var, replacement))),
+        Expr::Exp(inner) => Expr::Exp(Box::new(substitute(inner, var, replacement))),
+        Expr::Sinh(inner) => Expr::Sinh(Box::new(substitute(inner, var, replacement))),
+        Expr::Cosh(inner) => Expr::Cosh(Box::new(substitute(inner, var, replacement))),
+        Expr::Func { name, args, order } => Expr::Func {
+            name: name.clone(),
+            args: args.iter().map(|a| substitute(a, var, replacement)).collect(),
+            order: order.clone(),
+        },
     }
 }
 

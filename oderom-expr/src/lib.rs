@@ -5,8 +5,13 @@
 //! A tensor's *component* in a chart (e.g. `g_tt = -(1 - 2M/r)`) is not a
 //! rational number like `oderom_core::Scalar` -- it is an element of
 //! `C^inf(U)`, a function of the chart's coordinates. [`Expr`] represents
-//! such functions symbolically: rationals, coordinate variables, sums,
-//! products, integer powers, `sin`, `cos`.
+//! such functions symbolically: rationals ([`BigScalar`], arbitrary
+//! precision -- see its own docs for why `oderom_core::Scalar`'s i64
+//! isn't enough here), coordinate variables, sums, products, integer
+//! powers, and a closed set of known transcendental functions (`sin`,
+//! `cos`, `exp`, `sinh`, `cosh`) -- never a user-definable or
+//! indeterminate function (that is a different, not-yet-built
+//! capability; see DESIGN-M6-PREP.md section 1).
 //!
 //! This is deliberately *not* an e-graph (that is Marco 4's saturation
 //! engine). [`normalize`] is a fixed point of ordinary bottom-up
@@ -19,25 +24,36 @@
 //! acceptance test that checks `Kretschmann == 48 M^2 / r^6` by
 //! structural equality needs.
 
+mod big_scalar;
+mod canonical;
+pub mod cancel;
 mod diff;
+pub mod export;
+mod free_vars;
+mod isolate_linear;
 mod normalize;
+mod poly;
+mod rational_function;
 mod render;
 mod rationalize;
 mod substitute;
 
+pub use big_scalar::BigScalar;
+pub use cancel::{run_cancellable, Cancelled};
 pub use diff::diff;
+pub use free_vars::free_vars;
+pub use isolate_linear::isolate_linear;
 pub use normalize::normalize;
 pub use rationalize::{denominator_degree, rationalize};
-pub use render::GREEK_LETTERS;
+pub use render::{latex_var, GREEK_LETTERS};
 pub use substitute::substitute;
 
-use oderom_core::Scalar;
 use std::cmp::Ordering;
 
 /// A symbolic scalar expression.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Expr {
-    Rational(Scalar),
+    Rational(BigScalar),
     /// A coordinate variable, named for readability (Marco 2 has one
     /// chart per manifold, so a bare name is unambiguous).
     Var(String),
@@ -50,25 +66,46 @@ pub enum Expr {
     Pow(Box<Expr>, i32),
     Sin(Box<Expr>),
     Cos(Box<Expr>),
+    Exp(Box<Expr>),
+    Sinh(Box<Expr>),
+    Cosh(Box<Expr>),
+    /// An indeterminate function of one or more coordinates -- `f(r)`,
+    /// `h(t, r)` -- an opaque leaf the engine never evaluates or expands
+    /// (DESIGN-M6-PREP.md section 1, Marco 6 step 4). Unlike `Sin`/`Cos`/
+    /// `Exp`/`Sinh`/`Cosh`, it has no known value and no cross-atom
+    /// algebraic identity -- its only property is that it *has*
+    /// derivatives, which are themselves opaque symbols (`f'`, `f''`),
+    /// never simplified beyond the chain rule (`diff.rs`).
+    ///
+    /// `order[i]` is how many times this has been differentiated with
+    /// respect to `args[i]` -- all zero for the function itself; `diff`
+    /// increments `order[i]` by one each time it differentiates with
+    /// respect to `args[i]`'s own variable. This one multi-index covers
+    /// both the single-variable case (`order = [0]`, `[1]`, `[2]`, ...
+    /// rendered as `f`, `f'`, `f''`, ...) and the multivariable partial
+    /// case (`order = [1,0]` vs `[0,1]` for `h(t,r)`'s two distinct first
+    /// partials) uniformly -- never a fixed sibling function the way
+    /// `sin`'s derivative is always literally `cos`.
+    Func { name: String, args: Vec<Expr>, order: Vec<u32> },
 }
 
 impl Expr {
     pub fn zero() -> Expr {
-        Expr::Rational(Scalar::ZERO)
+        Expr::Rational(BigScalar::zero())
     }
 
     pub fn one() -> Expr {
-        Expr::Rational(Scalar::ONE)
+        Expr::Rational(BigScalar::one())
     }
 
     /// The integer `n` as an `Expr`.
     pub fn int(n: i64) -> Expr {
-        Expr::Rational(Scalar::from_int(n))
+        Expr::Rational(BigScalar::from_i64(n))
     }
 
     /// The rational `num/den` as an `Expr`.
     pub fn rational(num: i64, den: i64) -> Expr {
-        Expr::Rational(Scalar::new(num, den))
+        Expr::Rational(BigScalar::new(num, den))
     }
 
     /// A coordinate variable named `name`.
@@ -89,6 +126,26 @@ impl Expr {
         Expr::Cos(Box::new(self))
     }
 
+    pub fn exp(self) -> Expr {
+        Expr::Exp(Box::new(self))
+    }
+
+    pub fn sinh(self) -> Expr {
+        Expr::Sinh(Box::new(self))
+    }
+
+    pub fn cosh(self) -> Expr {
+        Expr::Cosh(Box::new(self))
+    }
+
+    /// An indeterminate function of `args`, order zero in every argument
+    /// (the function itself, not any derivative) -- `Expr::func("f",
+    /// vec![Expr::var("r")])` is `f(r)`.
+    pub fn func(name: impl Into<String>, args: Vec<Expr>) -> Expr {
+        let order = vec![0u32; args.len()];
+        Expr::Func { name: name.into(), args, order }
+    }
+
     /// Whether this is literally the rational zero (not whether it
     /// *simplifies* to zero -- call [`normalize`] first if it might not
     /// already be in normal form).
@@ -107,7 +164,8 @@ impl Expr {
             Expr::Rational(_) | Expr::Var(_) => 0,
             Expr::Add(terms) | Expr::Mul(terms) => terms.iter().map(Expr::node_count).sum(),
             Expr::Pow(base, _) => base.node_count(),
-            Expr::Sin(inner) | Expr::Cos(inner) => inner.node_count(),
+            Expr::Sin(inner) | Expr::Cos(inner) | Expr::Exp(inner) | Expr::Sinh(inner) | Expr::Cosh(inner) => inner.node_count(),
+            Expr::Func { args, .. } => args.iter().map(Expr::node_count).sum(),
         }
     }
 }
@@ -127,6 +185,10 @@ fn variant_rank(e: &Expr) -> u8 {
         Expr::Add(_) => 4,
         Expr::Sin(_) => 5,
         Expr::Cos(_) => 6,
+        Expr::Exp(_) => 7,
+        Expr::Sinh(_) => 8,
+        Expr::Cosh(_) => 9,
+        Expr::Func { .. } => 10,
     }
 }
 
@@ -139,13 +201,18 @@ impl PartialOrd for Expr {
 impl Ord for Expr {
     fn cmp(&self, other: &Self) -> Ordering {
         variant_rank(self).cmp(&variant_rank(other)).then_with(|| match (self, other) {
-            (Expr::Rational(a), Expr::Rational(b)) => {
-                (a.numerator(), a.denominator()).cmp(&(b.numerator(), b.denominator()))
-            }
+            (Expr::Rational(a), Expr::Rational(b)) => a.cmp(b),
             (Expr::Var(a), Expr::Var(b)) => a.cmp(b),
             (Expr::Pow(a, ea), Expr::Pow(b, eb)) => a.cmp(b).then_with(|| ea.cmp(eb)),
             (Expr::Mul(a), Expr::Mul(b)) | (Expr::Add(a), Expr::Add(b)) => a.cmp(b),
-            (Expr::Sin(a), Expr::Sin(b)) | (Expr::Cos(a), Expr::Cos(b)) => a.cmp(b),
+            (Expr::Sin(a), Expr::Sin(b))
+            | (Expr::Cos(a), Expr::Cos(b))
+            | (Expr::Exp(a), Expr::Exp(b))
+            | (Expr::Sinh(a), Expr::Sinh(b))
+            | (Expr::Cosh(a), Expr::Cosh(b)) => a.cmp(b),
+            (Expr::Func { name: na, args: aa, order: oa }, Expr::Func { name: nb, args: ab, order: ob }) => {
+                na.cmp(nb).then_with(|| aa.cmp(ab)).then_with(|| oa.cmp(ob))
+            }
             _ => Ordering::Equal,
         })
     }

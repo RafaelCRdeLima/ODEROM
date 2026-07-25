@@ -295,19 +295,257 @@ aritmética de manual, mesmo espírito do resto do projeto).
    `diagnostic_rn.rs`-style contra o `normalize` antigo *e* o novo,
    reportando os dois tempos lado a lado -- não só o novo.
 
-## 5. Perguntas restantes
+## 5. Status
 
-**D-RF.1 já aprovado** (restrição a MDC univariado por variável de
-polo).
+**D-RF.1, D-RF.2, D-RF.3 aprovados.** Quatro decisões adicionais, dadas
+antes de codar e registradas aqui em vez de deixadas para emergir do
+código:
 
-**D-RF.2** — as exigências 1-3 desta rodada mudam a resposta original
-("sin/cos átomos opacos") para "geradores internados, sem identidade
-trigonométrica" (2.4). Confirma essa versão revisada?
+**D-RF.4 — ordenação nunca depende de `AtomId`.** `AtomId` (o índice
+interno de `AtomTable`) serve só para igualdade/hash O(1) durante o
+agrupamento de monômios (`FxHashMap<Vec<(AtomId,u32)>, Scalar>`, não
+`BTreeMap` -- agrupar não precisa de ordem total, só de `Eq`+`Hash`).
+Qualquer ordenação com significado semântico (a forma canônica de
+`Poly` para `Eq`/exibição, a conversão final de volta para `Expr::Add`
+ordenado) usa uma chave derivada do *conteúdo* do átomo -- `Var(nome)`
+por nome, `Sin(arg)`/`Cos(arg)` por `(discriminante, Ord de arg)`, sendo
+`arg` um `Expr` já canônico que já tem `Ord` -- nunca a ordem de
+inserção na tabela. Concretamente: `AtomTable` guarda `Vec<AtomKey>`
+(conteúdo) + `FxHashMap<AtomKey, AtomId>` (interning); qualquer função
+que precise ordenar recebe `&AtomTable` e compara via
+`table.key(id)`, nunca via `id` cru.
 
-**D-RF.3** — o guarda-corpo (timeout + `--max-nodes` +
-`--max-denominator-degree`, os três já implementados em `oderom-cli`)
-fica valendo em produção enquanto isto é construído -- presumo que sim.
+**D-RF.5 — uma `AtomTable` por chamada de topo de `normalize()`, nunca
+`static`/global.** Criada no início de cada conversão `Expr ->
+RationalFunction`, passada por referência through a álgebra, descartada
+no final junto com o resultado convertido de volta para `Expr`. Cada
+thread (cada subcomando do CLI já roda na sua própria, ver commands.rs)
+tem a sua, sem sincronização nenhuma porque não há nada compartilhado.
+
+**D-RF.6 — `Poly`/`RationalFunction` só existem depois de toda
+derivação.** Decisão explícita (não a outra opção, de átomos carregarem
+regra de derivada): `diff()` continua operando exclusivamente sobre
+`Expr` -- assinatura intocada, chain rule intocada, nunca vê `Poly`. A
+sequência em `curvature::christoffel` (`diff(&g.get(...), coord)`
+produzindo `Expr` cru, que só depois entra em `normalize()`) já garante
+isso hoje; a garantia fica estrutural, não só convencional, porque
+`Poly`/`RationalFunction`/`AtomTable` não são exportados publicamente
+de `oderom-expr` -- só `normalize()` (via `rationalize`/`normalize`
+internos) os constrói e consome, nunca aparecem numa assinatura que
+`diff()` ou qualquer código fora do módulo possa alcançar.
+
+**D-RF.7 — identidade trigonométrica, não opcional.** Correção à
+proposta original: `sin`/`cos` como geradores livres torna `Poly`
+canônico para o *anel livre* `Q[..,sin,cos,..]`, não para o corpo de
+funções de verdade (`sin²+cos²=1` é uma relação real) -- isso degrada
+exatamente o "N componentes identicamente nulos" que os testes de
+aceitação já reportam, fazendo um componente que só é zero *por causa*
+da identidade passar a ser relatado como não-zero. Correção: `sin` é
+gerador primário (expoente inteiro livre); `cos` do mesmo argumento é
+sempre mantido em grau <= 1 -- toda vez que a multiplicação de `Poly`
+formaria `cos(arg)^(k>=2)`, aplica-se `cos^(2k) -> (1-sin(arg)²)^k` e
+`cos^(2k+1) -> cos(arg)*(1-sin(arg)²)^k` antes de prosseguir (expandido
+via `Poly::pow` sobre o gerador `Sin(arg)` da mesma tabela). Forma
+canônica padrão do anel trigonométrico `Q[sin,cos]/(sin²+cos²-1)`. Teste
+obrigatório (seção 4): um componente identicamente zero só via
+`sin²+cos²=1` continua sendo detectado como zero.
+
+**Nota sobre o guarda-corpo**: `denominator_degree` não precisa de
+otimização -- uma vez que `Poly` existir, grau vira leitura de campo
+(`den`'s grau total, já mantido pela própria estrutura). O custo atual é
+temporário, não vale investir nele agora.
 
 ---
 
-Aguardando seu ok antes de tocar em `oderom-expr`.
+Implementação autorizada. Próximo passo: código.
+
+## 6. Status final: switchover concluído
+
+Reissner-Nordström completa e bate com a forma fechada exata
+(`48M²/r⁶ - 96MQ²/r⁷ + 56Q⁴/r⁸`), via dois desenvolvimentos além do que
+a seção 2.3 originalmente propôs (Euclides univariado simples não foi
+suficiente):
+
+- **PRS subresultante** (Collins/Brown) no lugar de pseudo-divisão crua
+  na variável de polo, para manter o crescimento de coeficiente/termo
+  polinomial em vez de exponencial ao longo da sequência de restos.
+- **MDC multivariado recursivo** (`content()`/`primitive_part()` de
+  verdade, não só monomial): a cada nível, a variável de maior
+  prioridade (ordem total fixa D-RF.4) vira a variável de polo, os
+  coeficientes vivem numa variável a menos, recursão desce até MDC de
+  inteiro puro como caso base. Isso generaliza a restrição da seção 2.3
+  ("MDC univariado por variável de polo, não multivariado geral") — o
+  MDC agora *é* multivariado, mas continua construído em camadas
+  univariadas recursivas, não busca de base de Gröbner.
+
+`normalize()` foi trocado em produção para este motor
+(`oderom-expr/src/normalize.rs`). `legacy_v1` permanece no código,
+acessível via `ODEROM_ENGINE=legacy`, como escotilha de emergência e
+oráculo diferencial permanente (`v1_and_v2_agree`, agora comparação por
+valor via avaliação numérica, já que os dois motores provadamente têm
+formas canônicas diferentes — ambas válidas — para a mesma função
+racional).
+
+### Sonda de 4 termos: limite conhecido, e a correção do que realmente o causa
+
+Uma métrica sintética com `f(r) = 1 - 2M/r + Q²/r² - L²/r³` (3
+parâmetros livres: `M`, `Q`, `L` — `r` é a coordenada, não um
+parâmetro, contagem corrigida abaixo) foi usada como sonda de escala
+durante o desenvolvimento e não foi perseguida até terminar. A nota
+original, escrita a partir desse único caso, generalizou errado:
+
+> ~~Métricas com 3 ou mais parâmetros livres podem não terminar.~~
+
+**Falsificado por uso real** (achado incidental durante a Etapa 2 do
+REPL, não hipotético): uma métrica com só 2 parâmetros — a mesma
+contagem de Reissner-Nordström — travou por 60+s exatamente no estágio
+em que RN termina em menos de 1s. A diferença não é contagem de
+parâmetros; é `g_tt`/`g_rr` serem recíprocos (`g_tt·g_rr = -1`, a forma
+`-f dt² + f⁻¹ dr²` de livro-texto) ou não. Quatro pontos medidos, não
+estimados (fixture permanente: `oderom-session/tests/cancellation.rs`):
+
+| `g_tt`/`g_rr` | parâmetros livres | kretschmann |
+|---|---|---|
+| recíprocos (RN: `f(r)=1-2M/r+Q²/r²`) | 2 (`M`,`Q`) | ~1s |
+| recíprocos (`f(r)=1-2M/r+Q²/r²-L²/r³`) | 3 (`M`,`Q`,`L`) | ainda rodando após 30s |
+| independentes, 1 parâmetro cada (`1-2M/r` vs `1-M/r`) | 1 (`M`) | ~1.2s |
+| independentes, 2 parâmetros total (`1-2M/r+1/r²` vs `1-2M/r+Q²/r²`) | 2 (`M`,`Q`) | ainda rodando após 60s |
+
+Leitura: a forma recíproca dá ao `poly_gcd` um fator grande e
+garantido-compartilhado "de graça" em quase todo termo intermediário —
+por isso os 2 parâmetros de RN são baratos mas os mesmos 2 parâmetros
+sem reciprocidade não são. Reciprocidade compra aproximadamente o
+espaço de um parâmetro a mais, não imunidade: passado esse espaço (em
+qualquer uma das duas direções), o MDC multivariado recursivo continua
+denso, e o próximo degrau algorítmico continua sendo MDC
+modular/esparso (Zippel), onde bibliotecas externas (FLINT, Symbolica)
+são a resposta conhecida.
+
+O guarda-corpo continua sendo a defesa para qualquer caso que ultrapasse
+o teto, em qualquer direção — nunca trava sem saída, nunca devolve
+resultado errado: `--timeout`/`--max-nodes`/`--max-denominator-degree`
+do CLI para comandos avulsos, e (DESIGN-UI-SESSION.md) `:timeout` do
+REPL mais Ctrl+C, agora apoiados em checkpoints *dentro* de
+`normalize()`/`poly_gcd`/o laço do PRS subresultante
+(`oderom-expr/src/cancel.rs`), não só entre componentes — um único
+componente que nunca retorna é exatamente o caso que expôs esta nota (o
+checkpoint só-entre-componentes nunca era alcançado). Gatilho para
+reabrir a decisão de biblioteca externa: um problema real nesse regime
+bloqueando uso de verdade, não o teto por si só.
+
+### D-RF.7 dentro do MDC quebra a exatidão do PRS subresultante — corrigido
+
+Achado por fuzzing por propriedade (`v1_and_v2_agree`), não hipotético:
+reescrever `cos²→1-sin²` (D-RF.7) *durante* a própria computação do MDC
+recursivo (não só na conversão final `Poly`→`Expr`) muda o anel de
+coeficientes no meio do algoritmo, quebrando a contabilidade de grau de
+que o PRS subresultante depende para garantir divisão exata por β_i.
+Verificado por fora do Rust (Python/sympy): a divisão É exata no anel
+livre `Q[cos(t)][x]`; deixa de ser exata (resto não-zero, e não múltiplo
+do ideal `(cos²+sin²-1)`) assim que a reescrita entra em cena no meio do
+cálculo. Caso mínimo: `cos(0) + (r+x)^-3 + (r-1)` — nenhum cos² explícito
+na entrada, o quadrado surge internamente ao elevar ao quadrado um
+coeficiente líder durante o cálculo de β.
+
+Corrigido, não documentado como limite: `TrigRewriteSuppressor`
+(`oderom-expr/src/poly.rs`) suspende a reescrita para toda a descida
+recursiva de `poly_gcd` (uma flag thread-local, guarda RAII que restaura
+o valor anterior mesmo sob panic) e `Poly::normalize_trig` a reaplica
+uma única vez, no resultado final, antes de devolver ao chamador. `a`/`b`
+de entrada já chegam em forma normal (construídos por aritmética normal,
+não suspensa, em `expr_to_rational`) — só o que o próprio MDC introduz
+internamente fica temporariamente sem reduzir.
+
+**Aviso registrado, não implementado**: `TrigRewriteSuppressor` sendo
+thread-local está correto hoje porque cada `normalize()` roda do início
+ao fim numa única thread (D-RF.5). Se o cálculo de componentes
+(`christoffel`/`riemann_mixed` por componente, por exemplo) for
+paralelizado no futuro, uma flag thread-local deixa de bastar sozinha —
+o modo de falha é reescrita ativa dentro de um MDC rodando numa thread
+que nunca teve a flag ligada (thread-local não herda por spawn, e um
+executor que migra a mesma computação entre threads de trabalho pode
+retomar uma região suspensa numa thread "limpa"), produzindo resultado
+errado sem panic nenhum — silencioso, o pior tipo. Antes de paralelizar
+qualquer coisa que chame `normalize()`/`poly_gcd`, essa suspensão precisa
+virar estado passado explicitamente (parâmetro, ou carregado no
+contexto/task que o executor paralelo já propaga), não uma thread-local.
+Ver o comentário no próprio tipo (`poly.rs`) para o detalhe completo.
+
+## 7. Dois limites conhecidos, cada um com teste de ouro adormecido (Rodada Metrica Nao-Diagonal)
+
+**Ponto único de referência para quem for atacar o normalizador a
+seguir** — não reconstrua isto a partir de `DESIGN-M2.md`, dos
+comentários em `poly.rs`, ou desta conversa: o que segue é
+autossuficiente. A extensão de núcleo que generalizou
+`metric_inverse` para métricas não-diagonais (bloco 2x2 do Kerr
+invertido em milissegundos, sem regressão nas diagonais — ver
+`DESIGN-M2.md`, seção "D-M2.1 revisitada") expôs dois limites
+pré-existentes deste motor, nenhum dos dois causado pela inversão em
+si, ambos fora do escopo daquela rodada. Nenhum dos dois foi corrigido.
+Kerr e Gödel continuam fora da galeria (`oderom-cli/src/gallery.rs`)
+por causa deles.
+
+### 7.1 MDC multivariado sem variável de polo única — bloqueia Kerr
+
+**O que trava**: `christoffel`/`riemann_mixed` a partir da métrica de
+Kerr (Boyer-Lindquist). Medido (release, `oderom-components/tests/diagnostic_kerr.rs`):
+a inversão da métrica em si é rápida (`metric_block_structure` 1.7ms,
+`metric_inverse` 29ms via o bloco 2x2 `{t,phi}`) — o custo está rio
+abaixo: `christoffel` sozinho mediu **70.5s**, e `riemann_mixed` não
+terminou dentro de um orçamento de 180s.
+
+**Por quê**: o denominador `Sigma = r^2 + a^2*cos^2(theta)` de Kerr é
+genuinamente bivariado (`r` e `theta` aparecem os dois) — não existe
+"variável de polo" única, exatamente o caso que a seção 2.3 deste
+documento já nomeava, por esse nome, antes desta rodada existir, como o
+que a redução multivariada por MDC (seção 6, PRS subresultante +
+`content()`/`primitive_part()` recursivo) não colapsa totalmente:
+"correta e não-reduzida, só maior do que precisaria". Kerr é o primeiro
+fixture real deste projeto a bater nesse caso.
+
+**Forma fechada correta que deveria sair**: `R_ab = 0` identicamente,
+em todo componente, com `M`, `a`, `r`, `theta` livres (Kerr é vácuo).
+
+**Teste de ouro adormecido**: `oderom-components/tests/kerr.rs`,
+`ricci_of_kerr_is_identically_zero` — `#[ignore]`d, correto, esperando
+o motor. Tirar o `#[ignore]` e a suíte passar É a prova de que este
+limite foi corrigido.
+
+### 7.2 `exp(a)^n` nunca funde em `exp(n*a)` — bloqueia Gödel
+
+**O que trava**: o escalar de Ricci de Gödel (coordenadas originais de
+Gödel, `t,x,y,z`, bloco `{t,y}`) calcula rápido (suíte inteira,
+`oderom-components/tests/godel.rs`, ~0.2s) mas não reduz à forma
+fechada. O valor bruto é
+`(-3*exp(x)^2 + 2*exp(2x)) / (2*a^2*exp(x)^2 - a^2*exp(2x))`.
+
+**Por quê**: essa fração É algebricamente `-1/a^2` — numerador
+`= -exp(2x)`, denominador `= a^2*exp(2x)`, cancelando por
+`exp(x)^2 = exp(2x)` — mas `AtomTable::exp` (`oderom-expr/src/poly.rs`)
+deliberadamente nunca reescreve `exp(a)^n` como `exp(n*a)` (ao
+contrário de `sin`/`cos`, que ganharam exatamente esse tipo de redução
+de potência para `cos^2 -> 1-sin^2`, D-RF.7 acima). A decisão de
+deixar isso de fora foi tomada e documentada antes desta rodada, com a
+alegação empírica de que nenhum fixture real precisaria — Gödel é o
+primeiro que precisa (`g_ty` traz `exp(x)`, `g_yy` traz `exp(2x)`, na
+mesma razão).
+
+**Forma fechada correta que deveria sair**: `R = -1/a^2`, constante
+(convenção de assinatura maioria-mais-plus deste projeto; derivação
+independente — não assumida de memória — no próprio comentário de
+módulo de `godel.rs`).
+
+**Teste de ouro adormecido**: `oderom-components/tests/godel.rs`,
+`ricci_scalar_of_godel_is_minus_one_over_a_squared` — `#[ignore]`d,
+correto, esperando o motor. Mesmo critério: tirar o `#[ignore]` e a
+suíte passar é a prova.
+
+### O que NÃO fazer com esta seção
+
+Nenhum dos dois limites foi atacado nesta rodada, de propósito — MDC
+sem variável de polo única geral o bastante para `Sigma` bivariado, e
+fusão `exp(a)^n -> exp(n*a)` em `AtomTable::exp`, são os dois próximos
+passos reais, mas cada um é uma extensão do próprio motor racional
+(mesma escala de decisão que este documento inteiro já foi), não um
+ajuste pontual — decisão para uma rodada própria, não para ser
+resolvida de passagem enquanto se mexe em outra coisa.

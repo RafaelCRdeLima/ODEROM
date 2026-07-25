@@ -7,7 +7,13 @@ use oderom_types::Domain;
 /// dimension, and the domain (see [`oderom_types::Domain`]) it is valid
 /// on -- `Everywhere` unless restricted via [`Chart::with_domain`].
 /// Component index `i` (0-based) is the coefficient along `coords[i]`.
-#[derive(Clone, Debug)]
+/// `Hash` (and `PartialEq`/`Eq`, needed for it) derives cleanly here,
+/// unlike `Grid`/`ComponentTensor` (`canonical_hash`, same crate):
+/// `coords`' order is itself semantically meaningful (coordinate `i` is
+/// component index `i`, not an arbitrary map key), so there is no
+/// "insertion order doesn't matter" property to protect against --
+/// `#[derive(Hash)]` is exactly the right hash here, not a shortcut.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Chart {
     pub coords: Vec<String>,
     pub domain: Domain,

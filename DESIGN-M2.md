@@ -2,6 +2,41 @@
 
 **Status: implementado.** Ver [README.md](README.md#marco-2-status) para o resultado (Kretschmann de Schwarzschild = 48M²/r⁶, Ricci = 0) e para o que o design original abaixo subestimou — o normalizador de `oderom-expr` precisou de bem mais que "colige termos semelhantes" para dar conta da soma de Kretschmann (denominador comum + divisão por potência expandida), documentado em `oderom-expr/src/normalize.rs`. Decisões D-M2.1–D-M2.3 abaixo foram tomadas como propostas (métrica só diagonal; `Expr` em crate própria; teste por igualdade estrutural pós-normalização) sem objeção explícita antes de eu prosseguir.
 
+## D-M2.1 revisitada (Rodada Metrica Nao-Diagonal): a restricao diagonal caiu
+
+A restricao original de D-M2.1 ("so diagonal, erro em qualquer
+fora-da-diagonal") nao existe mais como limite do MOTOR. `metric_inverse`/
+`metric_inverse_checkpointed` (`oderom-components/src/curvature.rs`)
+detectam a estrutura da metrica em tres niveis -- diagonal (despacha para
+o `metric_inverse_diagonal` antigo, inalterado, mesmo caminho, mesma
+velocidade), diagonal-por-blocos (cada bloco desacoplado invertido
+isoladamente -- formula fechada para bloco 2x2, adjunta/cofatores geral
+para blocos maiores) e cheia (adjunta/cofatores no motor inteiro) --
+e verificam corretude via `g_ab g^bc = delta^a_c`
+(`verify_metric_inverse`, chamada em `debug_assert!` dentro do proprio
+`metric_inverse_checkpointed`, e diretamente nos testes de
+`oderom-components/tests/metric_inverse.rs`, `kerr.rs`, `godel.rs`). A
+deteccao de blocos e por uniao-busca sobre "esta entrada fora da
+diagonal normaliza para nao-zero" -- nunca por limiar, entao nunca pode
+classificar um acoplamento genuino como bloco isolado (ver o teste
+`subtle_coupling_between_apparent_blocks_is_not_treated_as_decoupled`).
+`ComponentError::NonDiagonalMetric` continua existindo, sem mudanca --
+e' o erro que `metric_inverse_diagonal` (agora so' um caminho interno,
+nao mais o unico) ainda devolve se chamada diretamente numa metrica
+nao-diagonal. Kerr (bloco 2x2 `{t,phi}`) mede 1.7ms de deteccao + 29ms
+de inversao (release) -- a inversao em si e' exatamente tao barata
+quanto prometido, sem regressao nas metricas diagonais existentes.
+
+**Kerr e Godel, porem, ainda NAO entraram na galeria**
+(`oderom-cli/src/gallery.rs`): nao por falha da inversao (comprovada
+correta e rapida acima), mas porque o teste de aceitacao de cada um
+esbarra num limite pre-existente e ja documentado do normalizador de
+`oderom-expr` -- nenhum dos dois criado por esta rodada, nenhum
+corrigido aqui. **Ponto unico de referencia, autossuficiente, para os
+dois limites (qual metrica cada um bloqueia, qual forma fechada
+deveria sair, onde esta o teste de ouro adormecido que prova o
+conserto): DESIGN-RATIONAL-FORM.md, secao 7.**
+
 Mesma regra do Marco 1: isto é uma proposta, não um começo de implementação. Ao final há decisões e questões abertas — quero seu ok (e respostas às questões) antes de escrever qualquer `struct`.
 
 ## 0. O que muda de patamar em relação ao Marco 1

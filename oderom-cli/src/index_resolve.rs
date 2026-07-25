@@ -23,8 +23,9 @@
 //! confused with each other, by construction, not by looking at names.
 
 use crate::error::CliError;
-use crate::expr_parser::parse_scalar_expr;
+use crate::expr_parser::{parse_scalar_expr, AliasScope};
 use crate::parser::{Tok, TokStream};
+use crate::span::Position;
 use oderom_components::Chart;
 use oderom_expr::Expr;
 
@@ -35,6 +36,7 @@ pub(crate) fn parse_component_line(
     chart: &Chart,
     arity: usize,
     decl_name: &str,
+    aliases: &AliasScope,
 ) -> Result<(Vec<u8>, Expr), CliError> {
     let indices = match toks.peek().clone() {
         Tok::Sym('[') => parse_bracket_indices(toks, chart, arity)?,
@@ -42,14 +44,10 @@ pub(crate) fn parse_component_line(
             toks.advance();
             parse_subscript_indices(toks, chart, arity)?
         }
-        other => {
-            return Err(CliError::Parse(format!(
-                "expected `[...]` or `{decl_name}_{{...}}`, found {other:?}"
-            )))
-        }
+        other => return Err(toks.error(format!("expected `[...]` or `{decl_name}_{{...}}`, found {other:?}"))),
     };
     toks.expect_sym('=')?;
-    let expr = parse_scalar_expr(toks)?;
+    let expr = parse_scalar_expr(toks, aliases)?;
     Ok((indices, expr))
 }
 
@@ -65,27 +63,37 @@ fn parse_bracket_indices(toks: &mut TokStream, chart: &Chart, arity: usize) -> R
         }
     }
     toks.expect_sym(']')?;
-    check_arity(&out, arity)?;
+    check_arity(&out, arity, Some(toks.current_span().start))?;
     Ok(out)
 }
 
 fn resolve_one_index_token(toks: &mut TokStream, chart: &Chart) -> Result<u8, CliError> {
+    let position = Some(toks.current_span().start);
+    let err_at = |msg: String| CliError::Parse { message: msg, position };
     match toks.advance() {
         Tok::Int(n) => Ok(n as u8),
         Tok::Ident(name) => coord_position(chart, &name)
-            .ok_or_else(|| CliError::Parse(format!("`{name}` is not a coordinate of this chart ({})", coord_list(chart)))),
+            .ok_or_else(|| err_at(format!("`{name}` is not a coordinate of this chart ({})", coord_list(chart)))),
         Tok::Command(name) => {
             let lower = name.to_ascii_lowercase();
             coord_position(chart, &lower)
-                .ok_or_else(|| CliError::Parse(format!("`\\{name}` is not a coordinate of this chart ({})", coord_list(chart))))
+                .ok_or_else(|| err_at(format!("`\\{name}` is not a coordinate of this chart ({})", coord_list(chart))))
         }
-        other => Err(CliError::Parse(format!("expected a coordinate name or integer index, found {other:?}"))),
+        other => Err(err_at(format!("expected a coordinate name or integer index, found {other:?}"))),
     }
 }
 
 fn parse_subscript_indices(toks: &mut TokStream, chart: &Chart, arity: usize) -> Result<Vec<u8>, CliError> {
     toks.expect_sym('_')?;
     toks.expect_sym('{')?;
+    // One anchor position for every error below, captured right after
+    // `_{`: precise per-piece spans would need `pieces` to carry one
+    // alongside each `Tok` (it doesn't -- `Vec<Tok>`, not `Vec<(Tok,
+    // Span)>`), and every error message here already names the specific
+    // piece/glued text at fault in words, so "which subscript block"
+    // rather than "which character in it" is the honest amount of
+    // precision to claim, not a shortcut.
+    let block_position = Some(toks.current_span().start);
     let mut pieces: Vec<Tok> = Vec::new();
     loop {
         match toks.peek().clone() {
@@ -93,7 +101,9 @@ fn parse_subscript_indices(toks: &mut TokStream, chart: &Chart, arity: usize) ->
                 toks.advance();
                 break;
             }
-            Tok::Eof => return Err(CliError::Parse("unterminated `_{...}`".to_string())),
+            Tok::Eof => {
+                return Err(CliError::Parse { message: "unterminated `_{...}`".to_string(), position: block_position })
+            }
             t => {
                 pieces.push(t);
                 toks.advance();
@@ -106,28 +116,37 @@ fn parse_subscript_indices(toks: &mut TokStream, chart: &Chart, arity: usize) ->
         for group in pieces.split(|t| *t == Tok::Sym(',')) {
             let position = match group {
                 [Tok::Int(n)] => *n as u8,
-                [Tok::Ident(name)] => coord_position(chart, name)
-                    .ok_or_else(|| CliError::Parse(format!("`{name}` is not a coordinate of this chart ({})", coord_list(chart))))?,
+                [Tok::Ident(name)] => coord_position(chart, name).ok_or_else(|| CliError::Parse {
+                    message: format!("`{name}` is not a coordinate of this chart ({})", coord_list(chart)),
+                    position: block_position,
+                })?,
                 [Tok::Command(name)] => {
                     let lower = name.to_ascii_lowercase();
-                    coord_position(chart, &lower)
-                        .ok_or_else(|| CliError::Parse(format!("`\\{name}` is not a coordinate of this chart ({})", coord_list(chart))))?
+                    coord_position(chart, &lower).ok_or_else(|| CliError::Parse {
+                        message: format!("`\\{name}` is not a coordinate of this chart ({})", coord_list(chart)),
+                        position: block_position,
+                    })?
                 }
-                _ => return Err(CliError::Parse("expected one coordinate name or integer between commas".to_string())),
+                _ => {
+                    return Err(CliError::Parse {
+                        message: "expected one coordinate name or integer between commas".to_string(),
+                        position: block_position,
+                    })
+                }
             };
             out.push(position);
         }
-        check_arity(&out, arity)?;
+        check_arity(&out, arity, block_position)?;
         Ok(out)
     } else {
-        decompose_glued(&pieces, chart, arity)
+        decompose_glued(&pieces, chart, arity, block_position)
     }
 }
 
 /// The core of 6.3: every full decomposition of the glued `pieces` into
 /// the chart's declared coordinate names, backtracking (not maximal
 /// munch), required to be exactly one reading of length `arity`.
-fn decompose_glued(pieces: &[Tok], chart: &Chart, arity: usize) -> Result<Vec<u8>, CliError> {
+fn decompose_glued(pieces: &[Tok], chart: &Chart, arity: usize, position: Option<Position>) -> Result<Vec<u8>, CliError> {
     let mut per_piece: Vec<Vec<Vec<String>>> = Vec::with_capacity(pieces.len());
     for p in pieces {
         match p {
@@ -136,14 +155,14 @@ fn decompose_glued(pieces: &[Tok], chart: &Chart, arity: usize) -> Result<Vec<u8
                 if chart.coords.contains(&lower) {
                     per_piece.push(vec![vec![lower]]);
                 } else {
-                    return Err(CliError::Parse(format!(
-                        "`\\{name}` is not a coordinate of this chart ({})",
-                        coord_list(chart)
-                    )));
+                    return Err(CliError::Parse {
+                        message: format!("`\\{name}` is not a coordinate of this chart ({})", coord_list(chart)),
+                        position,
+                    });
                 }
             }
             Tok::Ident(run) => per_piece.push(decompose_run(run, &chart.coords)),
-            other => return Err(CliError::Parse(format!("expected a coordinate name, found {other:?}"))),
+            other => return Err(CliError::Parse { message: format!("expected a coordinate name, found {other:?}"), position }),
         }
     }
 
@@ -169,18 +188,22 @@ fn decompose_glued(pieces: &[Tok], chart: &Chart, arity: usize) -> Result<Vec<u8
 
     let glued_text: String = pieces.iter().map(token_text).collect();
     match readings.as_slice() {
-        [] => Err(CliError::Parse(format!(
-            "`{glued_text}` is not decomposable into the coordinates of this chart ({}); use the comma form to be explicit",
-            coord_list(chart)
-        ))),
+        [] => Err(CliError::Parse {
+            message: format!(
+                "`{glued_text}` is not decomposable into the coordinates of this chart ({}); use the comma form to be explicit",
+                coord_list(chart)
+            ),
+            position,
+        }),
         [reading] => {
             Ok(reading.iter().map(|name| coord_position(chart, name).expect("name came from chart.coords")).collect())
         }
         many => {
             let listed = many.iter().map(|r| format!("[{}]", r.join(","))).collect::<Vec<_>>().join(" or ");
-            Err(CliError::Parse(format!(
-                "`{glued_text}` is ambiguous: could be {listed} -- use the comma form to disambiguate"
-            )))
+            Err(CliError::Parse {
+                message: format!("`{glued_text}` is ambiguous: could be {listed} -- use the comma form to disambiguate"),
+                position,
+            })
         }
     }
 }
@@ -216,11 +239,11 @@ fn coord_list(chart: &Chart) -> String {
     chart.coords.join(", ")
 }
 
-fn check_arity(indices: &[u8], expected: usize) -> Result<(), CliError> {
+fn check_arity(indices: &[u8], expected: usize, position: Option<Position>) -> Result<(), CliError> {
     if indices.len() == expected {
         Ok(())
     } else {
-        Err(CliError::Parse(format!("expected {expected} indices, found {}", indices.len())))
+        Err(CliError::Parse { message: format!("expected {expected} indices, found {}", indices.len()), position })
     }
 }
 

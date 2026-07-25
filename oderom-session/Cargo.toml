@@ -1,0 +1,17 @@
+[package]
+name = "oderom-session"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ODEROM UI session model -- definitions, worksheet entries, obsolescence by name, compute cache. No UI: see DESIGN-UI-SESSION.md."
+
+[dependencies]
+oderom-cli = { path = "../oderom-cli" }
+oderom-core = { path = "../oderom-core" }
+oderom-components = { path = "../oderom-components" }
+oderom-expr = { path = "../oderom-expr" }
+rustc-hash = "1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ODEROM (UI keymap test)</title>
+<link rel="stylesheet" href="vendor/codemirror/codemirror.css" />
+<link rel="stylesheet" href="vendor/katex/katex.min.css" />
+<link rel="stylesheet" href="notebook.css" />
+</head>
+<body>
+<!--
+  Automated UI-layer test entry point (tests/keymap.rs spawns the app
+  with ODEROM_APP_TEST set, which routes here instead of index.html --
+  src-tauri/src/lib.rs's `frontend_entry_point`). Identical markup and
+  identical <script> includes to index.html, on purpose: this drives
+  the real notebook.js/oderom-mode.js/CodeMirror/KaTeX, never a
+  reimplementation of them. keytest.js is the only addition -- it fires
+  synthetic-but-realistic DOM events (real focus changes, keydown
+  events with keyCode forced the way a genuine keypress already has it
+  set) and reports what actually happened back to the Rust test harness
+  via the `ui_test_report` command.
+-->
+<header id="app-header">
+  <div id="app-brand">
+    <!-- keep in lockstep with index.html's #app-brand -- see that file's
+         own comment for why this is inline SVG, not <img>, and why it's
+         the mark-only variant, not the full wordmark. -->
+    <svg id="app-logo" viewBox="6.5 0 100 100" role="img" aria-label="ODEROM">
+      <path d="M78.07 41.06A32 32 0 1 1 58.94 21.93" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+      <path d="M78.07 41.06L88.64 30.36" fill="none" stroke="#5DCAA5" stroke-width="6.5" stroke-linecap="round"/>
+      <path d="M95 24L92.5 34.2L84.7 26.5Z" fill="#5DCAA5"/>
+    </svg>
+    <span id="doc-name">sem título</span>
+  </div>
+  <div id="app-actions">
+    <input id="path-input" type="text" placeholder="caminho/arquivo.odn" />
+    <button id="open-btn" title="Abrir caderno">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H3zm0 3h20l-1.6 10.2A2 2 0 0 1 19.4 20H4.6a2 2 0 0 1-2-1.8z"/></svg>
+      Abrir
+    </button>
+    <button id="save-btn" title="Salvar caderno">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm9 2v4H8V5zm-7 8h12v6H7z"/></svg>
+      Salvar
+    </button>
+    <button id="gallery-btn" title="Carregar uma metrica conhecida da galeria">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H4zm2 2v8h12V6zm-2 12h16v2H4zM7 8l3 3 2-2 4 4H7z"/></svg>
+      Galeria
+    </button>
+    <span id="app-actions-divider" aria-hidden="true"></span>
+    <button id="clear-execution-btn" title="Limpar execução: volta todos os blocos a não-executados, sem tocar no texto">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+      Limpar execução
+    </button>
+    <button id="new-notebook-btn" class="danger" title="Novo caderno: apaga todos os blocos e começa em branco">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M6 7h12l-1 13a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2zm3-4h6l1 2H8zM9 10v8m3-8v8m3-8v8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+      Novo caderno
+    </button>
+  </div>
+</header>
+<!-- keep in lockstep with index.html's #gallery-panel -- see that file's own comment. -->
+<div id="gallery-panel" hidden>
+  <div id="gallery-panel-header">
+    <span>Escolha uma metrica</span>
+    <button id="gallery-close-btn" title="Fechar" aria-label="Fechar">&times;</button>
+  </div>
+  <ul id="gallery-list"></ul>
+</div>
+<!-- keep in lockstep with index.html's #new-notebook-confirm-panel -- see that file's own comment. -->
+<div id="new-notebook-confirm-panel" hidden>
+  <p>Isto apaga todos os blocos deste caderno. O texto não pode ser recuperado.</p>
+  <p id="new-notebook-confirm-file-note">O arquivo salvo, se houver, não é afetado — só o que está na tela é apagado.</p>
+  <div id="new-notebook-confirm-actions">
+    <button id="new-notebook-cancel-btn">Cancelar</button>
+    <button id="new-notebook-confirm-btn" class="danger">Apagar tudo</button>
+  </div>
+</div>
+<main id="blocks"></main>
+<footer id="status-bar">
+  <span id="status-left"></span>
+  <span id="status-right">Shift+Enter executa &middot; Ctrl+Enter fica &middot; Alt+Enter insere</span>
+</footer>
+
+<script src="vendor/codemirror/codemirror.js"></script>
+<script src="vendor/codemirror/addon-mode-simple.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="oderom-mode.js"></script>
+<script src="notebook.js"></script>
+<script src="keytest.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Regression fixture for `export` (Rodada Exportação): the free
+# parameter is named `E` -- a real coordinate/parameter name a user
+# could plausibly choose (energy scale, eccentricity, ...) that happens
+# to collide with BOTH Mathematica's own `E` (Euler's number) and
+# SymPy's own `E`/`exp(1)` special constant. `export` must detect this
+# and rename it (never silently emit code that would shadow the real
+# constant), documenting the rename in its own output -- see
+# `oderom_expr::export::{MATHEMATICA_RESERVED, SYMPY_RESERVED}`.
+manifold M dim 2
+bundle TM on M dim 2
+chart c on M coords (t, r)
+metric g on c bundle TM {
+  [t,t] = -(1 - E/r),
+  [r,r] = 1/(1 - E/r)
+}

@@ -123,6 +123,23 @@ impl Render for Scalar {
             Target::Latex if self.num < 0 => format!("-\\frac{{{}}}{{{}}}", -self.num, self.den),
             Target::Latex => format!("\\frac{{{}}}{{{}}}", self.num, self.den),
             Target::Json => format!(r#"{{"num":{},"den":{}}}"#, self.num, self.den),
+            // Mathematica's `/` between two integer literals is always
+            // exact (never a float, unlike most languages) -- the same
+            // bare `n/d` text Unicode already produces is already valid,
+            // exact Mathematica syntax, so no separate case is needed.
+            Target::Mathematica => self.to_string(),
+            // SymPy is the one target where bare `n/d` is NOT safe: `/`
+            // between two plain Python `int` literals is eager true
+            // division (`3/4` -> the float `0.75`, evaluated before
+            // SymPy ever sees it) unless at least one side is already a
+            // SymPy object -- a real trap for exactly the kind of
+            // "translate the syntax" job this trait exists for. `d == 1`
+            // (a plain integer) is safe as a bare literal either way (an
+            // `int` multiplied/added to a `Symbol` promotes exactly via
+            // `__rmul__`/`__radd__`); only a genuine fraction needs
+            // wrapping in `Rational(n, d)` to stay exact.
+            Target::Sympy if self.den == 1 => format!("{}", self.num),
+            Target::Sympy => format!("Rational({}, {})", self.num, self.den),
         }
     }
 }

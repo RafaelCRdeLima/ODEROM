@@ -1,0 +1,22 @@
+# A static, spherically symmetric metric with an UNKNOWN radial
+# function f(r) in place of a closed form -- Marco 6 step 4
+# (DESIGN-M6-PREP.md section 1): represents and derives, never solves.
+# f(r) is an indeterminate function, not an alias and not a known
+# function (sin/cos/exp/sinh/cosh) -- an opaque symbol the engine never
+# evaluates, whose only property is that it has derivatives (f', f''),
+# themselves opaque. This is the reciprocal-metric ansatz
+# (g_tt = -f(r), g_rr = 1/f(r)) every closed-form static spherical
+# solution in this repo's other fixtures (Schwarzschild, Reissner-
+# Nordstrom) already specializes -- written here with f(r) left
+# unknown, on purpose, to prove the engine carries an indeterminate
+# function all the way from the metric through to a real Christoffel
+# computation without ever needing to know what f actually is.
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -f(r),
+  [r,r] = 1/f(r),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}

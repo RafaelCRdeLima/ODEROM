@@ -9,6 +9,10 @@ members = [
     "oderom-components",
     "oderom-egraph",
     "oderom-jit",
+    "oderom-session",
+    "oderom-repl",
+    "oderom-notebook",
+    "oderom-app/src-tauri",
 ]
 
 [workspace.package]
@@ -17,3 +21,21 @@ license = "MIT OR Apache-2.0"
 
 [profile.release]
 lto = true
+# Rust's release profile does not check integer overflow by default (it
+# wraps silently) -- kept on here for the same reason `oderom-expr`
+# depends on `num-bigint`/`BigScalar` instead of a plain i64 (see that
+# crate's own Cargo.toml comment): silent wraparound in a symbolic-math
+# engine is a wrong-answer bug, not a crash, and much harder to notice.
+# Guarded by a permanent test (`oderom-core::tests::overflow_checks_are_enabled_in_this_build`)
+# so removing this line fails `cargo test` immediately, in any profile,
+# rather than silently regressing.
+overflow-checks = true
+# DO NOT set `panic = "abort"` here (or in any profile/crate that builds
+# `oderom-expr`). Ctrl+C/`:timeout` cancellation (`oderom-expr/src/cancel.rs`)
+# unwinds a panic out of `normalize()`/`poly_gcd`/the subresultant PRS
+# loop and catches it with `catch_unwind` -- under `panic = "abort"`,
+# `catch_unwind` does not catch, and a cancellation kills the whole
+# process instead of just the query. Guarded at compile time in
+# `oderom-expr/src/cancel.rs` (`#[cfg(panic = "abort")] compile_error!`),
+# so this is a backup explanation for a human reading this file, not the
+# only thing standing in the way.

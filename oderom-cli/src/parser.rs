@@ -6,10 +6,11 @@
 use crate::error::CliError;
 use crate::index_resolve::parse_component_line;
 use crate::model::Model;
+use crate::span::{Position, Span, Spanned};
 use oderom_components::{Chart, ComponentTensor, Grid};
 use oderom_core::{
     AbstractIndex, Factor, HeadId, Matching, Monomial, Perm, Registry, Scalar, SignedPerm, SlotId,
-    SlotSig, Variance,
+    SlotSig, Target, Variance,
 };
 use oderom_expr::normalize;
 use smallvec::SmallVec;
@@ -34,44 +35,73 @@ pub(crate) enum Tok {
 
 pub(crate) struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
+    line: u32,
+    column: u32,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Lexer { chars: src.chars().peekable() }
+        Lexer { chars: src.chars().peekable(), line: 1, column: 1 }
     }
 
-    pub(crate) fn next_tok(&mut self) -> Result<Tok, CliError> {
+    fn pos(&self) -> Position {
+        Position { line: self.line, column: self.column }
+    }
+
+    /// The only place this lexer's position advances -- every character
+    /// consumed anywhere below goes through this, so `next_tok`'s
+    /// returned `Span` is never approximate.
+    fn bump(&mut self) -> Option<char> {
+        let c = self.chars.next();
+        if let Some(c) = c {
+            if c == '\n' {
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.column += 1;
+            }
+        }
+        c
+    }
+
+    pub(crate) fn next_tok(&mut self) -> Result<(Tok, Span), CliError> {
         loop {
             match self.chars.peek() {
-                None => return Ok(Tok::Eof),
+                None => {
+                    let p = self.pos();
+                    return Ok((Tok::Eof, Span { start: p, end: p }));
+                }
                 Some(c) if c.is_whitespace() => {
-                    self.chars.next();
+                    self.bump();
                 }
                 Some('#') => {
                     while let Some(&c) = self.chars.peek() {
                         if c == '\n' {
                             break;
                         }
-                        self.chars.next();
+                        self.bump();
                     }
                 }
                 _ => break,
             }
         }
-        match self.chars.peek().copied() {
-            None => Ok(Tok::Eof),
+        let start = self.pos();
+        let tok = match self.chars.peek().copied() {
+            None => Tok::Eof,
             Some(c) if c.is_ascii_digit() => {
                 let mut n = String::new();
                 while let Some(&d) = self.chars.peek() {
                     if d.is_ascii_digit() {
                         n.push(d);
-                        self.chars.next();
+                        self.bump();
                     } else {
                         break;
                     }
                 }
-                n.parse().map(Tok::Int).map_err(|_| CliError::Parse(format!("bad integer `{n}`")))
+                n.parse().map(Tok::Int).map_err(|_| CliError::Parse {
+                    message: format!("bad integer `{n}`"),
+                    position: Some(start),
+                })?
             }
             // `_` is deliberately not an identifier character: it is the
             // LaTeX-flavored front-end's subscript operator (`g_{tt}`),
@@ -83,40 +113,52 @@ impl<'a> Lexer<'a> {
                 while let Some(&d) = self.chars.peek() {
                     if d.is_alphanumeric() {
                         s.push(d);
-                        self.chars.next();
+                        self.bump();
                     } else {
                         break;
                     }
                 }
-                Ok(Tok::Ident(s))
+                Tok::Ident(s)
             }
             Some('\\') => {
-                self.chars.next();
+                self.bump();
                 let mut s = String::new();
                 while let Some(&d) = self.chars.peek() {
                     if d.is_alphabetic() {
                         s.push(d);
-                        self.chars.next();
+                        self.bump();
                     } else {
                         break;
                     }
                 }
                 if s.is_empty() {
-                    return Err(CliError::Parse("`\\` must be followed by a command name".to_string()));
+                    return Err(CliError::Parse {
+                        message: "`\\` must be followed by a command name".to_string(),
+                        position: Some(start),
+                    });
                 }
-                Ok(Tok::Command(s))
+                Tok::Command(s)
             }
             Some(c) => {
-                self.chars.next();
-                Ok(Tok::Sym(c))
+                self.bump();
+                Tok::Sym(c)
             }
-        }
+        };
+        let end = self.pos();
+        Ok((tok, Span { start, end }))
     }
 }
 
 /// Turns a source string into a token stream with one token of lookahead.
+/// Each token's `Span` (start/end source position) is tracked alongside
+/// it, never inside `Tok` itself -- `Tok` stays a plain value compared by
+/// `==` everywhere it already is (`*toks.peek() == Tok::Sym(',')`, all
+/// over this crate); baking a span into it would either break every one
+/// of those comparisons or need a hand-rolled `PartialEq` that ignores
+/// the span, more surprising than keeping the two separate.
 pub(crate) struct TokStream {
     toks: Vec<Tok>,
+    spans: Vec<Span>,
     pos: usize,
 }
 
@@ -124,19 +166,70 @@ impl TokStream {
     pub(crate) fn new(src: &str) -> Result<Self, CliError> {
         let mut lexer = Lexer::new(src);
         let mut toks = Vec::new();
+        let mut spans = Vec::new();
         loop {
-            let t = lexer.next_tok()?;
+            let (t, span) = lexer.next_tok()?;
             let done = t == Tok::Eof;
             toks.push(t);
+            spans.push(span);
             if done {
                 break;
             }
         }
-        Ok(TokStream { toks, pos: 0 })
+        Ok(TokStream { toks, spans, pos: 0 })
     }
 
     pub(crate) fn peek(&self) -> &Tok {
         &self.toks[self.pos]
+    }
+
+    /// Peeks `offset` tokens past the current position (`0` is the same
+    /// as `peek()`) without consuming anything -- clamped to the last
+    /// token (`Eof`) past the stream's own end, same as `advance()`
+    /// already does. Needed only for the alias-definition lookahead
+    /// below (`starts_alias_def`): `:=` is two ordinary one-character
+    /// `Sym` tokens, not lexed specially, so recognizing it needs two
+    /// tokens of lookahead past an `Ident`, not the one `peek()` gives
+    /// everywhere else in this crate.
+    pub(crate) fn peek_at(&self, offset: usize) -> &Tok {
+        let idx = (self.pos + offset).min(self.toks.len() - 1);
+        &self.toks[idx]
+    }
+
+    /// Every name that appears anywhere in this stream as the target of
+    /// an alias definition (`NOME := ...`, see `starts_alias_def`) --
+    /// regardless of position. Used once, before the real top-to-bottom
+    /// parse (`parse_model`), so a forward reference (`NOME` used before
+    /// its own `NOME := ...` appears later in the same document) can be
+    /// reported as a clean error instead of silently falling back to
+    /// "just an ordinary free variable" the way a genuinely-never-declared
+    /// name still does. A single linear scan over the already-lexed
+    /// tokens -- no brace/structure awareness needed, since the shape
+    /// being matched (`Ident`, `Sym(':')`, `Sym('=')` in a row) cannot
+    /// occur anywhere else in this grammar (see `starts_alias_def`).
+    pub(crate) fn scan_alias_names(&self) -> std::collections::HashSet<String> {
+        let mut names = std::collections::HashSet::new();
+        for i in 0..self.toks.len() {
+            if let Tok::Ident(name) = &self.toks[i] {
+                if self.toks.get(i + 1) == Some(&Tok::Sym(':')) && self.toks.get(i + 2) == Some(&Tok::Sym('=')) {
+                    names.insert(name.clone());
+                }
+            }
+        }
+        names
+    }
+
+    /// The span of whatever `peek()` currently points at -- the position
+    /// used for "found X here" in every parse error below.
+    pub(crate) fn current_span(&self) -> Span {
+        self.spans[self.pos]
+    }
+
+    /// Convenience for the overwhelmingly common case (a single point,
+    /// not a range) -- every `CliError::Parse` this crate constructs
+    /// during active parsing uses this, not a bare string.
+    pub(crate) fn error(&self, message: impl Into<String>) -> CliError {
+        CliError::Parse { message: message.into(), position: Some(self.current_span().start) }
     }
 
     pub(crate) fn advance(&mut self) -> Tok {
@@ -148,39 +241,530 @@ impl TokStream {
     }
 
     pub(crate) fn expect_sym(&mut self, c: char) -> Result<(), CliError> {
+        let err = self.error(format!("expected `{c}`, found {:?}", self.peek()));
         match self.advance() {
             Tok::Sym(s) if s == c => Ok(()),
-            other => Err(CliError::Parse(format!("expected `{c}`, found {other:?}"))),
+            _ => Err(err),
         }
     }
 
     pub(crate) fn expect_ident(&mut self, kw: &str) -> Result<(), CliError> {
+        let err = self.error(format!("expected `{kw}`, found {:?}", self.peek()));
         match self.advance() {
             Tok::Ident(s) if s == kw => Ok(()),
-            other => Err(CliError::Parse(format!("expected `{kw}`, found {other:?}"))),
+            _ => Err(err),
         }
     }
 
     pub(crate) fn ident(&mut self) -> Result<String, CliError> {
+        let err = self.error(format!("expected an identifier, found {:?}", self.peek()));
         match self.advance() {
             Tok::Ident(s) => Ok(s),
-            other => Err(CliError::Parse(format!("expected an identifier, found {other:?}"))),
+            _ => Err(err),
         }
     }
 
     pub(crate) fn int(&mut self) -> Result<u64, CliError> {
+        let err = self.error(format!("expected a number, found {:?}", self.peek()));
         match self.advance() {
             Tok::Int(n) => Ok(n),
-            other => Err(CliError::Parse(format!("expected a number, found {other:?}"))),
+            _ => Err(err),
         }
     }
 
     /// Consumes a specific `\name` command token.
     pub(crate) fn expect_command(&mut self, name: &str) -> Result<(), CliError> {
+        let err = self.error(format!("expected `\\{name}`, found {:?}", self.peek()));
         match self.advance() {
             Tok::Command(s) if s == name => Ok(()),
-            other => Err(CliError::Parse(format!("expected `\\{name}`, found {other:?}"))),
+            _ => Err(err),
         }
+    }
+}
+
+// ---------------------------------------------------------------------
+// Worksheet entries: a second grammar production over the SAME lexer/
+// TokStream/error machinery as the `.od` document grammar below --
+// never a second parser (DESIGN-UI-SESSION.md, session correction: "a
+// entrada da planilha tem que passar pelo MESMO PARSER do .od"). v1
+// recognizes exactly one production, a bare command name optionally
+// followed by which declared metric/connection to run it against
+// (same disambiguation `--metric`/`resolve_choice` already does for the
+// CLI, now inside the grammar instead of a flag) -- growing to
+// expressions/contractions/substitutions later is a new `Query` variant
+// and a new branch in `parse_query`, not a new parser.
+// ---------------------------------------------------------------------
+
+/// v1's recognized worksheet commands -- the same five `oderom-cli`
+/// subcommands, now also reachable as a `Query::Command`, plus
+/// `Geodesic` (Marco 6 step 4, round B) and `Accel` (round C), whose own
+/// query shapes (`Query::Geodesic`/`Query::Accel`) carry an extra
+/// required field none of the other five have -- see those variants'
+/// own doc comments. `Accel` is spelled without an underscore
+/// deliberately: `_` is not a valid identifier character in this
+/// lexer at all (reserved for the LaTeX-style subscript operator,
+/// `g_{tt}`), so a name like `geodesic_solved` would never lex as one
+/// token in the first place -- `accel` was chosen over that shape for
+/// exactly this reason, not just brevity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandName {
+    Christoffel,
+    Riemann,
+    Ricci,
+    Scalar,
+    Kretschmann,
+    Geodesic,
+    Accel,
+    /// The Einstein tensor `G_ab = R_ab - (1/2) g_ab R` (Marco 6 step
+    /// 5) -- ordinary `Query::Command` shape, same as the first five:
+    /// an optional target, nothing else, unlike `Geodesic`/`Accel`'s
+    /// mandatory affine parameter. Needs a real metric (`g_ab` appears
+    /// literally in the formula, and `R` needs `g^bd` to contract) --
+    /// refuses a bare connection the same way `Scalar`/`Kretschmann`
+    /// already do.
+    Einstein,
+    /// `R_ab R^ab` (Marco 6 step 6) -- a scalar invariant, same
+    /// `Query::Command` shape as `scalar`/`kretschmann`; needs a real
+    /// metric to raise both indices. Spelled without an underscore for
+    /// the same lexer reason `Accel` is (`_` is the LaTeX-style
+    /// subscript operator, not a valid identifier character) --
+    /// `ricci_squared` would never lex as one token.
+    RicciSquared,
+    /// `R_abcd R^abcd - 4 R_ab R^ab + R^2` (Marco 6 step 6, the
+    /// Gauss-Bonnet/Euler density) -- pure recombination of `kretschmann`/
+    /// `RicciSquared`/`scalar`, same `Query::Command` shape, needs a
+    /// real metric (inherited from the three scalars it combines).
+    GaussBonnet,
+    /// The Weyl (conformal) tensor `C_abcd`, fully covariant (Marco 6
+    /// step 6) -- a tensor-listing query like `riemann`/`ricci`, not a
+    /// bare scalar. Needs a real metric (`g_ab`/`R` appear literally in
+    /// the formula) -- refuses a bare connection, unlike
+    /// `christoffel`/`riemann`/`ricci`. Also refuses in exactly 2
+    /// dimensions (the formula's own `1/(n-2)` term is undefined there)
+    /// -- see `oderom_components::ComponentError::WeylUndefinedInDimension2`.
+    Weyl,
+    /// `C_abcd C^abcd` (Marco 6 step 6) -- a scalar invariant like
+    /// `RicciSquared`, inheriting `Weyl`'s own dimension-2 refusal.
+    WeylSquared,
+}
+
+/// The one canonical (keyword, variant) list -- `from_str` below and
+/// [`CommandName::keywords`] both derive from this SAME array, so the
+/// set of words this grammar recognizes as a command and the set a
+/// caller can enumerate (e.g. a syntax highlighter, see that function's
+/// own doc comment) can never independently drift apart the way two
+/// hand-maintained lists can. Order here is also the order `keywords()`
+/// yields them in and the order every "expected one of: ..." error
+/// message lists them in.
+const COMMAND_KEYWORDS: &[(&str, CommandName)] = &[
+    ("christoffel", CommandName::Christoffel),
+    ("riemann", CommandName::Riemann),
+    ("ricci", CommandName::Ricci),
+    ("scalar", CommandName::Scalar),
+    ("kretschmann", CommandName::Kretschmann),
+    ("geodesic", CommandName::Geodesic),
+    ("accel", CommandName::Accel),
+    ("einstein", CommandName::Einstein),
+    ("riccisquare", CommandName::RicciSquared),
+    ("gaussbonnet", CommandName::GaussBonnet),
+    ("weyl", CommandName::Weyl),
+    ("weylsquare", CommandName::WeylSquared),
+];
+
+impl CommandName {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
+        COMMAND_KEYWORDS.iter().find(|(word, _)| *word == s).map(|(_, cmd)| *cmd)
+    }
+
+    /// Every keyword this grammar recognizes as the start of a
+    /// `Query::Command`/`Geodesic`/`Accel` production, in the same
+    /// order `from_str` itself checks them -- the single source a
+    /// syntax highlighter (`oderom-app/src-tauri/build.rs`, which
+    /// generates `dist/oderom-mode.js` from exactly this list) reads
+    /// instead of maintaining its own copy. This is the fix for a real,
+    /// repeat bug: the highlighter's keyword list is a plain JS regex,
+    /// disconnected from this parser, and had already gone stale twice
+    /// (once for `sin`/`cosh`/`exp`-family functions, once for `export`
+    /// itself) before this function existed to generate it from instead
+    /// of hand-copying it.
+    pub fn keywords() -> impl Iterator<Item = &'static str> {
+        COMMAND_KEYWORDS.iter().map(|(word, _)| *word)
+    }
+}
+
+/// The `export` keyword (Rodada Exportação) -- one canonical constant,
+/// used at every site that recognizes it (`parse_query_tokens`,
+/// `starts_new_top_level_statement`, `classify_block`) instead of the
+/// literal `"export"` repeated at each, and read by the syntax
+/// highlighter's generator alongside [`CommandName::keywords`]/
+/// [`DECLARATION_KEYWORDS`] for the same reason.
+pub const EXPORT_KEYWORD: &str = "export";
+
+/// The two words an index-variance marker accepts (`riemann
+/// [up,down,down,down]`, section 9.16/[`parse_variance_bracket`]) --
+/// canonical constants for the same reason `EXPORT_KEYWORD` is: one
+/// spelling, read by both the parser's own match and the syntax
+/// highlighter's generator, never two copies that could disagree.
+pub const VARIANCE_UP: &str = "up";
+pub const VARIANCE_DOWN: &str = "down";
+
+/// One worksheet entry, parsed. `Command`'s `target` is `None` unless
+/// the entry named a specific declared metric/connection -- resolving
+/// `None` against a `Model` uses the exact same "flag, or the sole
+/// entry, or an explicit ambiguity error" rule `resolve_choice`
+/// (`commands.rs`) already implements; `oderom-session` reuses that
+/// function rather than a new one.
+///
+/// `Geodesic`/`Accel`'s `param` is the user-named affine parameter
+/// (Marco 6 step 4, rounds B/C) -- always required, unlike `target`,
+/// which stays optional exactly as it is for the other five (resolved
+/// the same "flag, or the sole metric/connection, or an explicit
+/// ambiguity error" way). Separate variants, not another `Command`
+/// field, because the other five commands have no parameter at all and
+/// giving them an always-`None` one would be exactly the kind of
+/// "assigns a field to a case that can't use it" abstraction this
+/// project avoids. `Geodesic`/`Accel` are two distinct variants rather
+/// than one with a "solved: bool" flag for the same reason `Command`
+/// stays separate from both: they render differently (canonical "= 0"
+/// vs. solved-for-the-acceleration) and go through different
+/// `oderom-components::curvature` functions -- a boolean toggling that
+/// downstream behavior would just move the same two-way branch one
+/// level up without actually simplifying anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Query {
+    Command { name: Spanned<CommandName>, target: Option<Spanned<String>>, variance: Option<Spanned<Vec<Variance>>> },
+    Geodesic { target: Option<Spanned<String>>, param: Spanned<String> },
+    Accel { target: Option<Spanned<String>>, param: Spanned<String> },
+    /// `export TARGET QUERY` (Rodada Exportação): translate whatever
+    /// `inner` produces into Mathematica or SymPy source instead of this
+    /// project's own Unicode/LaTeX rendering. `format` is already
+    /// resolved to one of the two symbolic [`Target`] variants this
+    /// round supports -- `export`'s own target word is a fixed, closed
+    /// set of names (unlike `Command`'s `target` field, which names a
+    /// user-declared metric/connection and can't be validated until a
+    /// `Model` exists), so an unknown word is rejected right here, at
+    /// parse time, with the same span-carrying `CliError::Parse` every
+    /// other grammar mistake gets -- see [`parse_export_query_tail`].
+    Export { format: Spanned<Target>, inner: Box<Query> },
+}
+
+/// `QUERY := COMMAND_NAME IDENT? VARIANCE? | ('geodesic'|'accel') IDENT? IDENT` --
+/// `COMMAND_NAME` one of the first ten in [`CommandName`], the optional
+/// `IDENT` naming which declared metric or connection to run it against,
+/// and `VARIANCE` an optional trailing index-variance marker (Rodada
+/// Variancia, see [`parse_variance_bracket`]) -- `riemann g
+/// [up,down,down,down]` reads target then marker, in that order, the
+/// same "most specific qualifier last" order the grammar already uses
+/// for `geodesic`'s own target-then-parameter (`geodesic g tau`).
+/// `geodesic`/`accel` never take a variance marker at all -- they
+/// produce equations, not indexed tensor objects, so there is nothing
+/// for `up`/`down` to mean there; their own production is unchanged.
+///
+/// Whether a given `COMMAND_NAME` actually *accepts* a marker (barred
+/// for Christoffel, meaningless for a bare scalar) and whether its
+/// length matches the named tensor's rank are NOT checked here -- same
+/// "grammar checks shape, the caller checks meaning" split this
+/// production already uses for `target` (a name that doesn't resolve to
+/// any declared metric/connection is also not a parse error). See
+/// `oderom-session::run::run_command_query`'s own variance-validation
+/// step for where that happens.
+///
+/// Consumes the whole stream: any token left over after that is a parse
+/// error, not silently ignored trailing input. Same shape as
+/// [`parse_model`]/[`parse_monomial`]: takes source text directly, not a
+/// `TokStream` (kept crate-private -- an implementation detail of *how*
+/// parsing happens, never part of this crate's public surface).
+pub fn parse_query(src: &str) -> Result<Query, CliError> {
+    let mut toks = TokStream::new(src)?;
+    parse_query_tokens(&mut toks)
+}
+
+fn parse_query_tokens(toks: &mut TokStream) -> Result<Query, CliError> {
+    let name_span = toks.current_span();
+    let name_str = toks.ident()?;
+
+    if name_str == EXPORT_KEYWORD {
+        return parse_export_query_tail(toks);
+    }
+
+    let Some(name) = CommandName::from_str(&name_str) else {
+        return Err(CliError::Parse {
+            message: format!(
+                "unknown command `{name_str}` (expected one of: christoffel, riemann, ricci, scalar, kretschmann, geodesic, accel, einstein, riccisquare, gaussbonnet, weyl, weylsquare, export)"
+            ),
+            position: Some(name_span.start),
+        });
+    };
+
+    if name == CommandName::Geodesic || name == CommandName::Accel {
+        return parse_geodesic_like_query_tail(toks, name);
+    }
+
+    let name = Spanned::new(name, name_span);
+
+    // A target is a bare identifier; anything else (including `[`, the
+    // start of a variance marker, or `Eof`) means there is none. Every
+    // token that isn't `Ident`/`Sym('[')`/`Eof` here was already a hard
+    // parse error before this round (this production only ever accepted
+    // an identifier or nothing) -- `[` is the one genuinely new
+    // continuation this grammar recognizes.
+    let target = match toks.peek() {
+        Tok::Ident(_) => {
+            let target_span = toks.current_span();
+            let target_name = toks.ident()?;
+            Some(Spanned::new(target_name, target_span))
+        }
+        _ => None,
+    };
+
+    let variance = if *toks.peek() == Tok::Sym('[') { Some(parse_variance_bracket(toks)?) } else { None };
+
+    if *toks.peek() != Tok::Eof {
+        return Err(toks.error(format!("unexpected extra input after the command, found {:?}", toks.peek())));
+    }
+
+    Ok(Query::Command { name, target, variance })
+}
+
+/// `'[' ('up'|'down') (',' ('up'|'down'))* ']'` -- the index-variance
+/// marker (Rodada Variancia): one `up`/`down` per slot of the tensor the
+/// query names, `up` meaning "this index should come out contravariant
+/// (raised with `g^ab` if it isn't already)", `down` meaning "covariant
+/// (lowered with `g_ab` if it isn't already)". Maps directly onto
+/// [`Variance::Contra`]/[`Variance::Co`] rather than a separate
+/// up/down-specific enum -- it IS the same concept
+/// [`oderom_components::curvature::change_variance`] and the renderer's
+/// own `format_indices` already use, so there is no translation step
+/// anywhere downstream, only at this one parsing boundary (English
+/// words in the surface syntax, the crate's own variance type
+/// internally).
+///
+/// `[`/`]`/`,` were deliberately chosen reusing symbols this lexer
+/// already emits as plain, uncontested `Sym` tokens: metric/connection
+/// component declarations (`[i,j] = expr`) and `NAME[a,b,c,d]`
+/// tensor-monomial factors both already use them, and neither
+/// production can ever appear where this one starts (right after a
+/// query's own command name/target -- never inside a `{ ... }`
+/// component block, never inside a `canon` expression argument), so
+/// there is no grammar ambiguity to resolve and no new lexer work at
+/// all.
+fn parse_variance_bracket(toks: &mut TokStream) -> Result<Spanned<Vec<Variance>>, CliError> {
+    let open_span = toks.current_span();
+    toks.expect_sym('[')?;
+    let mut items = Vec::new();
+    loop {
+        let word_span = toks.current_span();
+        let word = toks.ident()?;
+        let v = match word.as_str() {
+            VARIANCE_UP => Variance::Contra,
+            VARIANCE_DOWN => Variance::Co,
+            other => {
+                return Err(CliError::Parse {
+                    message: format!("expected `up` or `down` in an index-variance marker, found `{other}`"),
+                    position: Some(word_span.start),
+                })
+            }
+        };
+        items.push(v);
+        if *toks.peek() == Tok::Sym(',') {
+            toks.advance();
+        } else {
+            break;
+        }
+    }
+    let close_span = toks.current_span();
+    toks.expect_sym(']')?;
+    Ok(Spanned::new(items, Span { start: open_span.start, end: close_span.end }))
+}
+
+/// `geodesic`/`accel`'s shared tail, after the keyword itself is
+/// already consumed: one trailing identifier is the parameter alone,
+/// two are target then parameter -- see [`parse_query`]'s own doc
+/// comment for the grammar and reasoning. `name` is which of the two
+/// keywords was actually seen, so the one, shared parsing routine below
+/// still builds the right `Query` variant and names the right command
+/// in its own error message.
+fn parse_geodesic_like_query_tail(toks: &mut TokStream, name: CommandName) -> Result<Query, CliError> {
+    let command_word = match name {
+        CommandName::Geodesic => "geodesic",
+        CommandName::Accel => "accel",
+        _ => unreachable!("only ever called for Geodesic or Accel"),
+    };
+
+    if *toks.peek() == Tok::Eof {
+        return Err(toks.error(format!("`{command_word}` needs an affine parameter name, e.g. `{command_word} tau` or `{command_word} g tau`")));
+    }
+    let first_span = toks.current_span();
+    let first = toks.ident()?;
+
+    let (target, param) = if *toks.peek() == Tok::Eof {
+        (None, Spanned::new(first, first_span))
+    } else {
+        let param_span = toks.current_span();
+        let param_name = toks.ident()?;
+        (Some(Spanned::new(first, first_span)), Spanned::new(param_name, param_span))
+    };
+
+    if *toks.peek() != Tok::Eof {
+        return Err(toks.error(format!("unexpected extra input after the command, found {:?}", toks.peek())));
+    }
+
+    Ok(match name {
+        CommandName::Geodesic => Query::Geodesic { target, param },
+        CommandName::Accel => Query::Accel { target, param },
+        _ => unreachable!("only ever called for Geodesic or Accel"),
+    })
+}
+
+/// `'export' ('mathematica'|'sympy') QUERY` -- `export`'s own tail,
+/// after the keyword itself is already consumed (Rodada Exportação).
+/// Validates the target word against exactly the two symbolic targets
+/// this round supports right here (a fixed, closed set, unlike a
+/// metric/connection `target` name, which can only be checked once a
+/// `Model` exists -- see `Query::Export`'s own doc comment), then
+/// recurses into [`parse_query_tokens`] itself for the inner query --
+/// `export sympy riemann g [up,down,down,down]` is `export` followed by
+/// exactly the same `QUERY` production this grammar already has, not a
+/// second, parallel one. The recursive call checks `Eof` at its own
+/// end, so trailing garbage after the inner query (`export sympy
+/// kretschmann extra`) is caught there, not by a second check here.
+/// The one canonical (keyword, `Target`) list for `export`'s own
+/// target word -- same "one array, two consumers" shape as
+/// `COMMAND_KEYWORDS`/[`CommandName::keywords`]: `parse_export_query_tail`
+/// below and [`export_target_keywords`] both read this, so the parser's
+/// accepted spellings and the syntax highlighter's keyword list can
+/// never disagree.
+const EXPORT_TARGET_KEYWORDS: &[(&str, Target)] = &[("mathematica", Target::Mathematica), ("sympy", Target::Sympy)];
+
+/// Every word `export` accepts as its target, in the same order
+/// `parse_export_query_tail` itself checks them -- read by the syntax
+/// highlighter's generator (`oderom-app/src-tauri/build.rs`), same
+/// reason as [`CommandName::keywords`].
+pub fn export_target_keywords() -> impl Iterator<Item = &'static str> {
+    EXPORT_TARGET_KEYWORDS.iter().map(|(word, _)| *word)
+}
+
+fn parse_export_query_tail(toks: &mut TokStream) -> Result<Query, CliError> {
+    if *toks.peek() == Tok::Eof {
+        return Err(toks.error("`export` needs a target and a query, e.g. `export sympy kretschmann` or `export mathematica riemann g`"));
+    }
+    let target_span = toks.current_span();
+    let target_str = toks.ident()?;
+    let Some((_, format)) = EXPORT_TARGET_KEYWORDS.iter().find(|(word, _)| *word == target_str) else {
+        return Err(CliError::Parse {
+            message: format!("unknown export target `{target_str}` (expected one of: mathematica, sympy)"),
+            position: Some(target_span.start),
+        });
+    };
+    let format = *format;
+
+    if *toks.peek() == Tok::Eof {
+        return Err(toks.error(format!("`export {target_str}` needs a query to export, e.g. `export {target_str} kretschmann`")));
+    }
+    let inner_span = toks.current_span();
+    let inner = parse_query_tokens(toks)?;
+    // `export sympy export mathematica kretschmann` -- nesting export
+    // inside export has no meaning (there is nothing left to translate
+    // a second time) and is rejected here, at parse time, rather than
+    // left to whatever `run_query_to_rendered` would do with it
+    // (`oderom-session::run` treats a nested `Query::Export` as
+    // unreachable precisely because this check rules it out earlier).
+    if matches!(inner, Query::Export { .. }) {
+        return Err(CliError::Parse { message: "`export` cannot be nested inside another `export`".to_string(), position: Some(inner_span.start) });
+    }
+    Ok(Query::Export { format: Spanned::new(format, target_span), inner: Box::new(inner) })
+}
+
+/// `oderom-notebook`'s "no separate mode, the parser decides" design
+/// (DESIGN-NOTEBOOK.md section 1) rests on this: the six declaration
+/// keywords `parse_model`'s own loop recognizes below
+/// (`manifold`/`bundle`/`head`/`chart`/`metric`/`connection`) and the
+/// twelve query keywords `CommandName::from_str` recognizes are disjoint
+/// sets, so peeking a block's very first token is enough to route it to
+/// `parse_model` or `parse_query` without ambiguity -- not a second
+/// grammar, just a named entry point for a distinction the lexer
+/// already makes (`parse_model`'s own doc comment: "statements are
+/// recognized by their leading keyword").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockKind {
+    Declaration,
+    Query,
+}
+
+/// `pub`, not `pub(crate)`: read directly by `oderom-app/src-tauri/build.rs`
+/// (via `oderom-cli` as a build-dependency) to generate the syntax
+/// highlighter's keyword list -- see [`CommandName::keywords`]'s own
+/// doc comment for why this project now generates that list instead of
+/// hand-maintaining a second copy of it.
+pub const DECLARATION_KEYWORDS: [&str; 6] = ["manifold", "bundle", "head", "chart", "metric", "connection"];
+
+/// Whether the token at `toks`'s CURRENT position (assumed to already be
+/// an `Ident`) begins an alias definition `NOME := EXPR` -- two tokens
+/// of lookahead, no consumption. Safe to recognize this way (never a
+/// false positive against the rest of the grammar): `:=` is two
+/// one-character `Sym` tokens, `Sym(':')` immediately followed by
+/// `Sym('=')`, and the only other place a bare `:` appears at all is
+/// `head NAME : SLOT` (`parse_head_decl`), where it is never immediately
+/// followed by `=`.
+pub(crate) fn starts_alias_def(toks: &TokStream) -> bool {
+    *toks.peek_at(1) == Tok::Sym(':') && *toks.peek_at(2) == Tok::Sym('=')
+}
+
+/// Whether `name` -- the identifier `toks` is CURRENTLY positioned at --
+/// should be read as the start of a brand new top-level statement rather
+/// than a continuation, by juxtaposition, of whatever `SCALAR_EXPR` is
+/// currently being parsed. Every OTHER `SCALAR_EXPR` use site is
+/// unambiguously delimited by `,`, `}`, or end of input (a metric/
+/// connection component line, a query's target) -- an alias definition
+/// (`NOME := EXPR`) is the one place this grammar has an expression with
+/// NO closing token at all, so without this check, `parse_product`'s
+/// ordinary juxtaposition rule (`expr_parser.rs`'s `starts_atom`, which
+/// treats any following identifier as an implicit multiplication factor
+/// -- `2M` needs this) would just keep eating tokens across the boundary
+/// into whatever statement comes next: `f := 1 - 2*M/r\nchart ...` would
+/// silently read as `(1 - 2*M/r) * chart`, and `f := 1 - 2*M/r\ng :=
+/// f^2` would silently read `f`'s own value as `(1 - 2*M/r) * g` --
+/// found exactly this way, by a real test, not anticipated in the
+/// abstract. Two cases stop it: `name` is one of the eleven reserved
+/// keywords (six declaration, five query -- `2 metric` was never
+/// meaningful as "multiply by a variable named metric" to begin with, so
+/// nothing legitimate is lost; an explicit `2*metric` still works,
+/// juxtaposition is the only thing withheld), or `name` is itself about
+/// to become ANOTHER alias definition (`starts_alias_def`).
+pub(crate) fn starts_new_top_level_statement(toks: &TokStream, name: &str) -> bool {
+    DECLARATION_KEYWORDS.contains(&name) || CommandName::from_str(name).is_some() || name == EXPORT_KEYWORD || starts_alias_def(toks)
+}
+
+/// Classifies `src` by its leading keyword alone -- does not otherwise
+/// validate it (a block that classifies as `Declaration` here can still
+/// fail `parse_model`, same as any `.od` text always could). `Err` only
+/// when the first token isn't a recognized keyword, a recognized query
+/// name, or the start of an alias definition (including an empty block,
+/// whose first token is `Eof`) -- a third, explicit case a notebook
+/// block can show, never a silent guess between the other two.
+///
+/// An alias definition classifies as `Declaration` (never a fourth
+/// `BlockKind`): it *is* one, in every way this enum's two consumers
+/// care about -- `reconstruct_declarations` (`oderom-notebook`) needs to
+/// concatenate it together with every other declaration block and
+/// reevaluate as one unit (exactly what gives an alias its "declared
+/// before used, notebook-wide from that point down" scope, via the
+/// exact same mechanism `chart`/`metric`/... already use -- no new
+/// notebook-level machinery), and editing it must cascade-obsolete
+/// blocks below it exactly like editing a `chart` would. See
+/// `DESIGN-NOTEBOOK.md`'s alias section for the reasoning in full.
+pub fn classify_block(src: &str) -> Result<BlockKind, CliError> {
+    let toks = TokStream::new(src)?;
+    match toks.peek() {
+        Tok::Ident(kw) if DECLARATION_KEYWORDS.contains(&kw.as_str()) => Ok(BlockKind::Declaration),
+        Tok::Ident(kw) if kw == EXPORT_KEYWORD || CommandName::from_str(kw).is_some() => Ok(BlockKind::Query),
+        Tok::Ident(_) if starts_alias_def(&toks) => Ok(BlockKind::Declaration),
+        other => Err(CliError::Parse {
+            message: format!(
+                "expected a declaration (manifold/bundle/head/chart/metric/connection), an alias (NOME := expression), or a query (christoffel/riemann/ricci/scalar/kretschmann/geodesic/accel/einstein/riccisquare/gaussbonnet/weyl/weylsquare/export), found {other:?}"
+            ),
+            position: Some(toks.current_span().start),
+        }),
     }
 }
 
@@ -221,6 +805,13 @@ impl TokStream {
 /// already assumes).
 pub fn parse_model(src: &str) -> Result<Model, CliError> {
     let mut toks = TokStream::new(src)?;
+    // Computed once, up front, over the WHOLE document -- every alias
+    // name this text will ever declare, regardless of position. Used
+    // only to tell "genuinely never an alias" (silently an ordinary free
+    // variable, unchanged from before this feature existed) apart from
+    // "an alias, but not declared yet at this point" (a forward
+    // reference, a clean error) -- see `AliasScope`'s own doc comment.
+    let alias_names = toks.scan_alias_names();
     let mut model = Model::new();
 
     loop {
@@ -253,17 +844,58 @@ pub fn parse_model(src: &str) -> Result<Model, CliError> {
             }
             Tok::Ident(kw) if kw == "metric" => {
                 toks.advance();
-                parse_metric_decl(&mut toks, &mut model)?;
+                parse_metric_decl(&mut toks, &mut model, &alias_names)?;
             }
             Tok::Ident(kw) if kw == "connection" => {
                 toks.advance();
-                parse_connection_decl(&mut toks, &mut model)?;
+                parse_connection_decl(&mut toks, &mut model, &alias_names)?;
             }
-            other => return Err(CliError::Parse(format!("expected a declaration, found {other:?}"))),
+            // Checked last among the `Ident` arms, same reasoning as
+            // `classify_block`'s own ordering: a name that collides with
+            // one of the six keywords above (or, further down at
+            // statement level, is never reached here at all since
+            // queries have their own separate grammar) is still caught
+            // by ITS OWN arm first, so e.g. `chart := 5` fails inside
+            // `parse_chart_decl` with a real (if not maximally specific)
+            // error rather than silently becoming an alias -- consistent
+            // with this project's "clear error over silent guess" rule,
+            // not a gap.
+            Tok::Ident(name) if starts_alias_def(&toks) => {
+                toks.advance();
+                toks.expect_sym(':')?;
+                toks.expect_sym('=')?;
+                parse_alias_decl(&mut toks, &mut model, name, &alias_names)?;
+            }
+            other => return Err(toks.error(format!("expected a declaration or an alias (NOME := expression), found {other:?}"))),
         }
     }
 
     Ok(model)
+}
+
+/// `NOME := EXPR` (`starts_alias_def`/`classify_block` recognize the
+/// leading shape; this does the actual parse once `parse_model`'s own
+/// loop has already consumed `NOME :=`). Pure syntactic sugar: `expr` is
+/// parsed against `model.aliases` AS BUILT SO FAR (never the final,
+/// whole-document map) and stored fully expanded -- an alias's own
+/// right-hand side can reference an earlier alias (also already
+/// expanded by the time it's stored, so expansion never has to recurse
+/// at lookup time), but never itself or one declared later (that is
+/// exactly the forward-reference case `AliasScope`/`alias_names`
+/// catches, with a clean error, not silent misresolution as a bare
+/// variable). Redefining the same name is rejected the same way
+/// `chart`'s own duplicate check already is -- checked after parsing the
+/// right-hand side (matching `parse_chart_decl`'s own ordering: a
+/// duplicate whose own right-hand side also fails to parse reports THAT
+/// error, not a swallowed one).
+fn parse_alias_decl(toks: &mut TokStream, model: &mut Model, name: String, alias_names: &std::collections::HashSet<String>) -> Result<(), CliError> {
+    let scope = crate::expr_parser::AliasScope { declared: &model.aliases, all_names: alias_names };
+    let expr = crate::expr_parser::parse_scalar_expr(toks, &scope)?;
+    if model.aliases.contains_key(&name) {
+        return Err(toks.error(format!("alias `{name}` is already declared")));
+    }
+    model.aliases.insert(name, expr);
+    Ok(())
 }
 
 fn parse_chart_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
@@ -286,27 +918,27 @@ fn parse_chart_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliEr
 
     let dim = model.registry.manifold(manifold).dim as usize;
     if coords.len() != dim {
-        return Err(CliError::Parse(format!(
+        return Err(toks.error(format!(
             "chart `{name}` has {} coordinates, but manifold `{manifold_name}` has dimension {dim}",
             coords.len()
         )));
     }
     if model.charts.contains_key(&name) {
-        return Err(CliError::Parse(format!("chart `{name}` is already declared")));
+        return Err(toks.error(format!("chart `{name}` is already declared")));
     }
     model.charts.insert(name, Chart::new(coords));
     Ok(())
 }
 
-fn lookup_chart<'a>(model: &'a Model, name: &str) -> Result<&'a Chart, CliError> {
-    model.charts.get(name).ok_or_else(|| CliError::Parse(format!("unknown chart `{name}`")))
+fn lookup_chart<'a>(model: &'a Model, toks: &TokStream, name: &str) -> Result<&'a Chart, CliError> {
+    model.charts.get(name).ok_or_else(|| toks.error(format!("unknown chart `{name}`")))
 }
 
-fn parse_metric_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
+fn parse_metric_decl(toks: &mut TokStream, model: &mut Model, alias_names: &std::collections::HashSet<String>) -> Result<(), CliError> {
     let name = toks.ident()?;
     toks.expect_ident("on")?;
     let chart_name = toks.ident()?;
-    let chart = lookup_chart(model, &chart_name)?.clone();
+    let chart = lookup_chart(model, toks, &chart_name)?.clone();
     toks.expect_ident("bundle")?;
     let bundle_name = toks.ident()?;
     let bundle = model.registry.lookup_bundle(&bundle_name)?;
@@ -318,7 +950,8 @@ fn parse_metric_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliE
     let mut tensor = ComponentTensor::new(head);
     toks.expect_sym('{')?;
     loop {
-        let (indices, expr) = parse_component_line(toks, &chart, 2, &name)?;
+        let scope = crate::expr_parser::AliasScope { declared: &model.aliases, all_names: alias_names };
+        let (indices, expr) = parse_component_line(toks, &chart, 2, &name, &scope)?;
         tensor.set(&model.registry, &indices, normalize(&expr))?;
         if *toks.peek() == Tok::Sym(',') {
             toks.advance();
@@ -332,16 +965,17 @@ fn parse_metric_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliE
     Ok(())
 }
 
-fn parse_connection_decl(toks: &mut TokStream, model: &mut Model) -> Result<(), CliError> {
+fn parse_connection_decl(toks: &mut TokStream, model: &mut Model, alias_names: &std::collections::HashSet<String>) -> Result<(), CliError> {
     let name = toks.ident()?;
     toks.expect_ident("on")?;
     let chart_name = toks.ident()?;
-    let chart = lookup_chart(model, &chart_name)?.clone();
+    let chart = lookup_chart(model, toks, &chart_name)?.clone();
 
     let mut gamma = Grid::new(chart.dim(), 3);
     toks.expect_sym('{')?;
     loop {
-        let (indices, expr) = parse_component_line(toks, &chart, 3, &name)?;
+        let scope = crate::expr_parser::AliasScope { declared: &model.aliases, all_names: alias_names };
+        let (indices, expr) = parse_component_line(toks, &chart, 3, &name, &scope)?;
         gamma.set(&indices, normalize(&expr));
         if *toks.peek() == Tok::Sym(',') {
             toks.advance();
@@ -416,19 +1050,19 @@ fn parse_generators(toks: &mut TokStream, arity: usize) -> Result<Vec<SignedPerm
                         }
                     }
                     toks.expect_sym(')')?;
-                    apply_cycle(&mut images, &cycle, arity)?;
+                    apply_cycle(toks, &mut images, &cycle, arity)?;
                     if *toks.peek() != Tok::Sym('(') {
                         break;
                     }
                 }
+                let sign_err = toks.error(format!(
+                    "expected `+` or `-` after a symmetry generator's cycles, found {:?}",
+                    toks.peek()
+                ));
                 let sign = match toks.advance() {
                     Tok::Sym('+') => 1,
                     Tok::Sym('-') => -1,
-                    other => {
-                        return Err(CliError::Parse(format!(
-                            "expected `+` or `-` after a symmetry generator's cycles, found {other:?}"
-                        )))
-                    }
+                    _ => return Err(sign_err),
                 };
                 gens.push(SignedPerm::new(Perm::from_images(images), sign));
             }
@@ -438,10 +1072,10 @@ fn parse_generators(toks: &mut TokStream, arity: usize) -> Result<Vec<SignedPerm
     Ok(gens)
 }
 
-fn apply_cycle(images: &mut [u16], cycle: &[u16], arity: usize) -> Result<(), CliError> {
+fn apply_cycle(toks: &TokStream, images: &mut [u16], cycle: &[u16], arity: usize) -> Result<(), CliError> {
     for &c in cycle {
         if c == 0 || c as usize > arity {
-            return Err(CliError::Parse(format!(
+            return Err(toks.error(format!(
                 "symmetry generator references slot {c}, but the head has arity {arity} (slots are 1-based)"
             )));
         }
@@ -503,11 +1137,11 @@ pub fn parse_monomial(src: &str, registry: &Registry) -> Result<Monomial, CliErr
         match toks.peek().clone() {
             Tok::Ident(_) => factors.push(parse_factor(&mut toks)?),
             Tok::Eof => break,
-            other => return Err(CliError::Parse(format!("expected a tensor factor, found {other:?}"))),
+            other => return Err(toks.error(format!("expected a tensor factor, found {other:?}"))),
         }
     }
     if factors.is_empty() {
-        return Err(CliError::Parse("expected at least one tensor factor".to_string()));
+        return Err(toks.error("expected at least one tensor factor"));
     }
 
     build_monomial(coeff, factors, registry)
@@ -542,11 +1176,10 @@ fn build_monomial(
         let head = registry.lookup_head(&pf.head_name)?;
         let arity = registry.head(head).arity();
         if pf.indices.len() != arity {
-            return Err(CliError::Parse(format!(
-                "`{}` has arity {arity}, but {} indices were given",
-                pf.head_name,
-                pf.indices.len()
-            )));
+            return Err(CliError::Parse {
+                message: format!("`{}` has arity {arity}, but {} indices were given", pf.head_name, pf.indices.len()),
+                position: None,
+            });
         }
         head_ids.push(head);
         for (si, name) in pf.indices.iter().enumerate() {
@@ -567,10 +1200,13 @@ fn build_monomial(
             [only] => free.push((*only, AbstractIndex::new(name))),
             [a, b] => pairs.push((*a, *b)),
             other => {
-                return Err(CliError::Parse(format!(
-                    "index `{name}` appears {} times; it must appear once (free) or twice (contracted)",
-                    other.len()
-                )))
+                return Err(CliError::Parse {
+                    message: format!(
+                        "index `{name}` appears {} times; it must appear once (free) or twice (contracted)",
+                        other.len()
+                    ),
+                    position: None,
+                })
             }
         }
     }
@@ -637,6 +1273,18 @@ pub fn format_monomial(m: &Monomial, registry: &Registry) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oderom_expr::Expr;
+
+    /// `unwrap_err()` needs `T: Debug`, which `Model` deliberately does
+    /// not derive (nothing else in this crate needs it) -- this is the
+    /// same "expect an error, don't care what `Ok` would have looked
+    /// like" check without adding that bound just for tests.
+    fn expect_parse_error(src: &str) -> CliError {
+        match parse_model(src) {
+            Err(e) => e,
+            Ok(_) => panic!("expected a parse error, got Ok"),
+        }
+    }
 
     const PRELUDE: &str = "
 manifold M dim 4
@@ -646,6 +1294,548 @@ head g : TM*, TM* symmetry (1 2)+
 head eps : TM*, TM*, TM* symmetry antisymmetric
 head W : TM*
 ";
+
+    #[test]
+    fn classify_block_recognizes_every_declaration_keyword() {
+        for kw in ["manifold", "bundle", "head", "chart", "metric", "connection"] {
+            assert_eq!(classify_block(&format!("{kw} whatever")).unwrap(), BlockKind::Declaration, "keyword: {kw}");
+        }
+    }
+
+    #[test]
+    fn classify_block_recognizes_every_query_keyword() {
+        for kw in [
+            "christoffel",
+            "riemann",
+            "ricci",
+            "scalar",
+            "kretschmann",
+            "geodesic",
+            "accel",
+            "einstein",
+            "riccisquare",
+            "gaussbonnet",
+            "weyl",
+            "weylsquare",
+        ] {
+            assert_eq!(classify_block(kw).unwrap(), BlockKind::Query, "keyword: {kw}");
+        }
+    }
+
+    #[test]
+    fn classify_block_rejects_an_unrecognized_leading_keyword() {
+        let err = classify_block("bogus stuff").unwrap_err();
+        assert!(matches!(err, CliError::Parse { position: Some(_), .. }));
+    }
+
+    #[test]
+    fn classify_block_rejects_an_empty_block() {
+        assert!(classify_block("").is_err());
+        assert!(classify_block("   \n  ").is_err());
+    }
+
+    #[test]
+    fn classify_block_recognizes_an_alias_definition_as_a_declaration() {
+        assert_eq!(classify_block("f := 1 - 2*M/r").unwrap(), BlockKind::Declaration);
+    }
+
+    #[test]
+    fn classify_block_does_not_mistake_a_bare_colon_for_an_alias() {
+        // `head NAME : SLOT` uses a bare `:` that is never immediately
+        // followed by `=` -- must not be misread as an alias definition.
+        assert_eq!(classify_block("head R : TM*, TM*").unwrap(), BlockKind::Declaration);
+    }
+
+    #[test]
+    fn parse_model_expands_an_alias_inline_into_a_metric_component() {
+        let src = format!(
+            "{PRELUDE}
+f := 1 - 2*M/r + Q^2/r^2
+chart schw on M coords (t, r, theta, phi)
+metric mg on schw bundle TM {{
+  [t,t] = -f,
+  [r,r] = 1/f,
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}}
+"
+        );
+        let model = parse_model(&src).unwrap();
+        assert_eq!(model.aliases.len(), 1);
+        assert!(model.aliases.contains_key("f"));
+
+        // Golden check: the SAME metric written out by hand, with `f`
+        // substituted textually, must produce byte-identical stored
+        // components -- proof the expansion is faithful, not just that
+        // parsing succeeded.
+        let src_no_alias = format!(
+            "{PRELUDE}
+chart schw on M coords (t, r, theta, phi)
+metric mg on schw bundle TM {{
+  [t,t] = -(1 - 2*M/r + Q^2/r^2),
+  [r,r] = 1/(1 - 2*M/r + Q^2/r^2),
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}}
+"
+        );
+        let model_no_alias = parse_model(&src_no_alias).unwrap();
+        let (_, _, tensor_alias) = &model.metrics["mg"];
+        let (_, _, tensor_direct) = &model_no_alias.metrics["mg"];
+        assert_eq!(tensor_alias.canonical_hash(), tensor_direct.canonical_hash());
+    }
+
+    #[test]
+    fn an_alias_can_reference_an_earlier_alias() {
+        let src = format!(
+            "{PRELUDE}
+f := 1 - 2*M/r
+g := f^2
+chart schw on M coords (t, r, theta, phi)
+metric g2 on schw bundle TM {{
+  [t,t] = -g,
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+"
+        );
+        let model = parse_model(&src).unwrap();
+        assert_eq!(model.aliases.len(), 2);
+        // `g`'s own stored value must already be fully expanded (no
+        // trace of `f` left inside it) -- confirmed by comparing against
+        // the same expression built directly.
+        let expected = oderom_expr::normalize(&(Expr::one() - Expr::int(2) * Expr::var("M") / Expr::var("r")).pow(2));
+        assert_eq!(oderom_expr::normalize(&model.aliases["g"]), expected);
+    }
+
+    #[test]
+    fn redeclaring_the_same_alias_name_is_a_clean_error() {
+        let src = "f := 1\nf := 2\n";
+        let err = expect_parse_error(src);
+        let message = err.to_string();
+        assert!(message.contains("alias `f` is already declared"), "{message}");
+    }
+
+    #[test]
+    fn using_an_alias_before_its_declaration_is_a_clean_error_not_a_free_variable() {
+        let src = format!(
+            "{PRELUDE}
+chart schw on M coords (t, r, theta, phi)
+metric mg on schw bundle TM {{
+  [t,t] = -f,
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+f := 1 - 2*M/r
+"
+        );
+        let err = expect_parse_error(&src);
+        let message = err.to_string();
+        assert!(message.contains("used before its own `f := ...` declaration"), "{message}");
+    }
+
+    #[test]
+    fn a_name_that_is_never_declared_as_an_alias_anywhere_stays_a_free_variable() {
+        // Confirms end to end (through parse_model, not just
+        // expr_parser's own unit test) that ordinary constants (M, Q,
+        // ...) are completely unaffected by this feature.
+        let src = format!(
+            "{PRELUDE}
+chart schw on M coords (t, r, theta, phi)
+metric mg on schw bundle TM {{
+  [t,t] = -(1 - 2*M/r),
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+"
+        );
+        assert!(parse_model(&src).is_ok());
+    }
+
+    #[test]
+    fn parenthesized_use_of_an_alias_name_is_the_indeterminate_function_never_the_alias() {
+        // Marco 6 step 4 (DESIGN-M6-PREP.md section 1) filled in the
+        // parenthesized reservation this test used to check was still
+        // empty: `f(r)` is no longer rejected -- it is the indeterminate
+        // function `f` applied to `r`, completely independent of `f`'s
+        // OWN alias declaration two lines above. End to end through
+        // `parse_model` (not just `expr_parser`'s own unit test): the
+        // metric's `[t,t]` component must contain `Func{name:"f",...}`,
+        // never the alias's expanded `1 - 2*M/r`.
+        let src = format!(
+            "{PRELUDE}
+f := 1 - 2*M/r
+chart schw on M coords (t, r, theta, phi)
+metric mg on schw bundle TM {{
+  [t,t] = -f(r),
+  [r,r] = 1,
+  [theta,theta] = 1,
+  [phi,phi] = 1
+}}
+"
+        );
+        let model = parse_model(&src).unwrap();
+        let (_, _, tensor) = model.metrics.get("mg").expect("mg was declared");
+        let tt = tensor.get(&model.registry, &[0, 0]).unwrap();
+        assert!(matches!(tt, oderom_expr::Expr::Mul(_)), "expected -f(r) as a Mul, got {tt:?}");
+        let contains_func = |e: &oderom_expr::Expr| -> bool {
+            fn walk(e: &oderom_expr::Expr) -> bool {
+                match e {
+                    oderom_expr::Expr::Func { name, .. } => name == "f",
+                    oderom_expr::Expr::Mul(fs) | oderom_expr::Expr::Add(fs) => fs.iter().any(walk),
+                    oderom_expr::Expr::Pow(b, _) => walk(b),
+                    _ => false,
+                }
+            }
+            walk(e)
+        };
+        assert!(contains_func(&tt), "expected the metric component to contain the indeterminate function f, not the alias's expansion: {tt:?}");
+    }
+
+    #[test]
+    fn a_name_colliding_with_a_reserved_keyword_never_silently_becomes_an_alias() {
+        // `chart := 5` -- the leading-keyword arms in both `classify_block`
+        // and `parse_model`'s own loop take priority over alias
+        // recognition, so this is a real (if not maximally specific)
+        // error from inside `parse_chart_decl`, never a silent alias.
+        let err = expect_parse_error("chart := 5");
+        assert!(matches!(err, CliError::Parse { .. }));
+    }
+
+    #[test]
+    fn parse_query_accepts_a_bare_command() {
+        let q = parse_query("ricci").unwrap();
+        assert_eq!(
+            q,
+            Query::Command {
+                name: Spanned::new(CommandName::Ricci, Span { start: Position { line: 1, column: 1 }, end: Position { line: 1, column: 6 } }),
+                target: None,
+                variance: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_query_accepts_a_command_with_a_target() {
+        let q = parse_query("ricci g").unwrap();
+        match q {
+            Query::Command { name, target, variance } => {
+                assert_eq!(name.value, CommandName::Ricci);
+                assert_eq!(target.unwrap().value, "g");
+                assert!(variance.is_none());
+            }
+            Query::Geodesic { .. } => panic!("expected Query::Command, got Query::Geodesic"),
+            Query::Accel { .. } => panic!("expected Query::Command, got Query::Accel"),
+            Query::Export { .. } => panic!("expected Query::Command, got Query::Export"),
+        }
+    }
+
+    #[test]
+    fn parse_query_rejects_an_unknown_command() {
+        let err = parse_query("bogus").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("unknown command"));
+    }
+
+    /// `geodesic PARAM` -- parameter only, target resolved the same
+    /// convention every other command's optional target already uses
+    /// (the file's sole metric/connection).
+    #[test]
+    fn parse_query_accepts_geodesic_with_only_a_parameter() {
+        let q = parse_query("geodesic tau").unwrap();
+        match q {
+            Query::Geodesic { target, param } => {
+                assert!(target.is_none());
+                assert_eq!(param.value, "tau");
+            }
+            Query::Command { .. } => panic!("expected Query::Geodesic, got Query::Command"),
+            Query::Accel { .. } => panic!("expected Query::Geodesic, got Query::Accel"),
+            Query::Export { .. } => panic!("expected Query::Geodesic, got Query::Export"),
+        }
+    }
+
+    /// `geodesic TARGET PARAM` -- target then parameter, in that order
+    /// ("g's geodesic equation, parametrized by tau").
+    #[test]
+    fn parse_query_accepts_geodesic_with_a_target_and_a_parameter() {
+        let q = parse_query("geodesic g tau").unwrap();
+        match q {
+            Query::Geodesic { target, param } => {
+                assert_eq!(target.unwrap().value, "g");
+                assert_eq!(param.value, "tau");
+            }
+            Query::Command { .. } => panic!("expected Query::Geodesic, got Query::Command"),
+            Query::Accel { .. } => panic!("expected Query::Geodesic, got Query::Accel"),
+            Query::Export { .. } => panic!("expected Query::Geodesic, got Query::Export"),
+        }
+    }
+
+    /// The parameter is mandatory -- unlike the other five commands'
+    /// optional target, `geodesic` alone (no parameter at all) is a
+    /// clear parse error, never a query with an implicit/guessed name.
+    #[test]
+    fn parse_query_rejects_geodesic_with_no_parameter() {
+        let err = parse_query("geodesic").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("affine parameter"));
+    }
+
+    #[test]
+    fn parse_query_rejects_geodesic_with_trailing_input() {
+        let err = parse_query("geodesic g tau extra").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("extra input"));
+    }
+
+    /// `accel` shares its grammar with `geodesic` (same tail-parsing
+    /// routine, `parse_geodesic_like_query_tail`) -- these mirror
+    /// `geodesic`'s own four grammar tests above, proving the shared
+    /// routine really does build the right variant for each keyword,
+    /// not just whichever one happened to be tested first.
+    #[test]
+    fn parse_query_accepts_accel_with_only_a_parameter() {
+        let q = parse_query("accel tau").unwrap();
+        match q {
+            Query::Accel { target, param } => {
+                assert!(target.is_none());
+                assert_eq!(param.value, "tau");
+            }
+            Query::Command { .. } => panic!("expected Query::Accel, got Query::Command"),
+            Query::Geodesic { .. } => panic!("expected Query::Accel, got Query::Geodesic"),
+            Query::Export { .. } => panic!("expected Query::Accel, got Query::Export"),
+        }
+    }
+
+    #[test]
+    fn parse_query_accepts_accel_with_a_target_and_a_parameter() {
+        let q = parse_query("accel g tau").unwrap();
+        match q {
+            Query::Accel { target, param } => {
+                assert_eq!(target.unwrap().value, "g");
+                assert_eq!(param.value, "tau");
+            }
+            Query::Command { .. } => panic!("expected Query::Accel, got Query::Command"),
+            Query::Geodesic { .. } => panic!("expected Query::Accel, got Query::Geodesic"),
+            Query::Export { .. } => panic!("expected Query::Accel, got Query::Export"),
+        }
+    }
+
+    #[test]
+    fn parse_query_rejects_accel_with_no_parameter() {
+        let err = parse_query("accel").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("affine parameter"));
+    }
+
+    #[test]
+    fn parse_query_rejects_accel_with_trailing_input() {
+        let err = parse_query("accel g tau extra").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("extra input"));
+    }
+
+    #[test]
+    fn parse_query_rejects_trailing_input() {
+        let err = parse_query("ricci g extra").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("extra input"));
+    }
+
+    // -------------------------------------------------------------
+    // Index-variance marker grammar (Rodada Variancia): `[up,down,...]`.
+    // Whether a given command *accepts* a marker at all (Christoffel,
+    // the five scalars) and arity-against-rank are validated downstream
+    // (`oderom-session::run::run_command_query`), not by this grammar --
+    // these tests only check parsing shape.
+    // -------------------------------------------------------------
+
+    #[test]
+    fn parse_query_accepts_a_bare_command_with_a_variance_marker_and_no_target() {
+        let q = parse_query("riemann [up,down,down,down]").unwrap();
+        match q {
+            Query::Command { name, target, variance } => {
+                assert_eq!(name.value, CommandName::Riemann);
+                assert!(target.is_none());
+                assert_eq!(variance.unwrap().value, vec![Variance::Contra, Variance::Co, Variance::Co, Variance::Co]);
+            }
+            other => panic!("expected Query::Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_accepts_a_target_then_a_variance_marker_in_that_order() {
+        let q = parse_query("ricci g [up,up]").unwrap();
+        match q {
+            Query::Command { name, target, variance } => {
+                assert_eq!(name.value, CommandName::Ricci);
+                assert_eq!(target.unwrap().value, "g");
+                assert_eq!(variance.unwrap().value, vec![Variance::Contra, Variance::Contra]);
+            }
+            other => panic!("expected Query::Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_with_no_bracket_leaves_variance_none() {
+        let q = parse_query("riemann g").unwrap();
+        match q {
+            Query::Command { variance, .. } => assert!(variance.is_none(), "no bracket in the input must mean no variance marker, not an empty one"),
+            other => panic!("expected Query::Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_rejects_a_word_other_than_up_or_down_inside_the_bracket() {
+        let err = parse_query("riemann [up,sideways,down,down]").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("up") && format!("{err}").contains("down"), "{err}");
+    }
+
+    #[test]
+    fn parse_query_rejects_an_unclosed_variance_bracket() {
+        let err = parse_query("riemann [up,down").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+    }
+
+    #[test]
+    fn parse_query_rejects_trailing_input_after_a_variance_marker() {
+        let err = parse_query("riemann [up,down,down,down] extra").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("extra input"));
+    }
+
+    // -------------------------------------------------------------
+    // `export` (Rodada Exportação)
+    // -------------------------------------------------------------
+
+    #[test]
+    fn parse_query_accepts_export_sympy_of_a_bare_command() {
+        let q = parse_query("export sympy kretschmann").unwrap();
+        match q {
+            Query::Export { format, inner } => {
+                assert_eq!(format.value, Target::Sympy);
+                assert!(matches!(*inner, Query::Command { name, .. } if name.value == CommandName::Kretschmann));
+            }
+            other => panic!("expected Query::Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_accepts_export_mathematica_of_a_command_with_a_target() {
+        let q = parse_query("export mathematica riemann g").unwrap();
+        match q {
+            Query::Export { format, inner } => {
+                assert_eq!(format.value, Target::Mathematica);
+                match *inner {
+                    Query::Command { name, target, .. } => {
+                        assert_eq!(name.value, CommandName::Riemann);
+                        assert_eq!(target.unwrap().value, "g");
+                    }
+                    other => panic!("expected Query::Command, got {other:?}"),
+                }
+            }
+            other => panic!("expected Query::Export, got {other:?}"),
+        }
+    }
+
+    /// `export` composes with every other query shape, not just a bare
+    /// command -- geodesic here, since it has its own distinct grammar
+    /// tail (`parse_geodesic_like_query_tail`), the one most likely to
+    /// interact badly with a wrapping production if the recursion were
+    /// done wrong.
+    #[test]
+    fn parse_query_accepts_export_of_a_geodesic_query() {
+        let q = parse_query("export sympy geodesic g tau").unwrap();
+        match q {
+            Query::Export { format, inner } => {
+                assert_eq!(format.value, Target::Sympy);
+                match *inner {
+                    Query::Geodesic { target, param } => {
+                        assert_eq!(target.unwrap().value, "g");
+                        assert_eq!(param.value, "tau");
+                    }
+                    other => panic!("expected Query::Geodesic, got {other:?}"),
+                }
+            }
+            other => panic!("expected Query::Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_accepts_export_of_a_variance_marked_query() {
+        let q = parse_query("export mathematica riemann [up,down,down,down]").unwrap();
+        match q {
+            Query::Export { inner, .. } => {
+                assert!(matches!(*inner, Query::Command { variance: Some(_), .. }));
+            }
+            other => panic!("expected Query::Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_query_rejects_an_unknown_export_target() {
+        let err = parse_query("export octave kretschmann").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        let message = format!("{err}");
+        assert!(message.contains("unknown export target"));
+        assert!(message.contains("mathematica"));
+        assert!(message.contains("sympy"));
+    }
+
+    #[test]
+    fn parse_query_rejects_export_with_no_target_and_no_query() {
+        let err = parse_query("export").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+    }
+
+    #[test]
+    fn parse_query_rejects_export_with_a_target_but_no_query() {
+        let err = parse_query("export sympy").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("needs a query to export"));
+    }
+
+    #[test]
+    fn parse_query_rejects_nested_export() {
+        let err = parse_query("export sympy export mathematica kretschmann").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("cannot be nested"));
+    }
+
+    /// `geodesic`, not a bare command, is the one production whose own
+    /// grammar has no room for an extra trailing identifier to be
+    /// mistaken for anything legitimate (a bare command like
+    /// `kretschmann` would instead read a trailing word as its own
+    /// optional target -- not a useful test of trailing-input
+    /// rejection).
+    #[test]
+    fn parse_query_rejects_trailing_input_after_export() {
+        let err = parse_query("export sympy geodesic g tau extra").unwrap_err();
+        assert!(matches!(err, CliError::Parse { .. }));
+        assert!(format!("{err}").contains("extra input"));
+    }
+
+    #[test]
+    fn classify_block_recognizes_export_as_a_query() {
+        assert_eq!(classify_block("export sympy kretschmann").unwrap(), BlockKind::Query);
+    }
+
+    /// The whole reason `TokStream` tracks positions: a real, multi-line
+    /// `.od` source with an error on a specific line reports THAT line,
+    /// not line 1 or some other approximation.
+    #[test]
+    fn parse_errors_report_the_correct_line_and_column() {
+        let src = "manifold M dim 4\nbundle TM on M dim 4\nbogus keyword here\n";
+        let err = match parse_model(src) {
+            Err(e) => e,
+            Ok(_) => panic!("expected a parse error"),
+        };
+        let CliError::Parse { position, .. } = err else { panic!("expected CliError::Parse, got {err:?}") };
+        assert_eq!(position, Some(Position { line: 3, column: 1 }));
+    }
 
     #[test]
     fn parses_prelude_declarations() {
@@ -681,14 +1871,14 @@ head W : TM*
     fn index_appearing_three_times_is_a_parse_error() {
         let reg = parse_model(PRELUDE).unwrap().registry;
         let err = parse_monomial("R[a,a,a,b]", &reg).unwrap_err();
-        assert!(matches!(err, CliError::Parse(_)));
+        assert!(matches!(err, CliError::Parse { .. }));
     }
 
     #[test]
     fn wrong_arity_is_a_parse_error() {
         let reg = parse_model(PRELUDE).unwrap().registry;
         let err = parse_monomial("g[a,b,c]", &reg).unwrap_err();
-        assert!(matches!(err, CliError::Parse(_)));
+        assert!(matches!(err, CliError::Parse { .. }));
     }
 
     #[test]

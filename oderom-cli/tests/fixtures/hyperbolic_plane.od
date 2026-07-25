@@ -1,0 +1,15 @@
+# The hyperbolic plane H^2, geodesic polar coordinates: ds^2 = dchi^2 +
+# sinh(chi)^2 dphi^2. Direct hyperbolic analogue of the round 2-sphere
+# (ds^2 = dtheta^2 + sin(theta)^2 dphi^2) -- exercises sinh AND cosh
+# together (Christoffel symbols involve cosh(chi)/sinh(chi), same shape
+# as the sphere's cos(theta)/sin(theta)), including the cosh^2-sinh^2=1
+# identity during Ricci/Kretschmann's own simplification. Constant
+# negative curvature: expected Ricci scalar -2 (Gaussian curvature -1,
+# R = 2K in 2D) -- exact sign flip of the sphere's +2.
+manifold H2 dim 2
+bundle TH2 on H2 dim 2
+chart polar on H2 coords (chi, phi)
+metric g on polar bundle TH2 {
+  [chi,chi] = 1,
+  [phi,phi] = sinh(chi)^2
+}

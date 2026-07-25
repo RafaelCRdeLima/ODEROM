@@ -1,0 +1,39 @@
+[package]
+name = "oderom-app"
+version = "0.1.0"
+description = "ODEROM notebook shell (Etapa 3, DESIGN-NOTEBOOK.md)."
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "oderom_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+# Host-only, never linked into the app itself -- read at build time
+# (build.rs) purely to generate `dist/oderom-mode.js`'s keyword lists
+# from the SAME arrays the real parser uses, so the syntax highlighter
+# can never hand-drift from the grammar again (Rodada Exportação
+# follow-up: `export` itself had gone missing from the highlighter,
+# the second time a new keyword did).
+oderom-cli = { path = "../../oderom-cli" }
+
+[dependencies]
+oderom-notebook = { path = "../../oderom-notebook" }
+oderom-components = { path = "../../oderom-components" }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+arboard = "3"
+
+[dev-dependencies]
+# For `tests/highlight_keywords.rs` only -- see that file's own doc
+# comment. Not a runtime dependency of the shipped app.
+oderom-cli = { path = "../../oderom-cli" }
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"

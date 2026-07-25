@@ -22,6 +22,7 @@ pub mod atlas;
 pub mod chart;
 pub mod curvature;
 pub mod error;
+pub mod geodesic_render;
 pub mod grid;
 pub mod holonomy;
 pub mod render;
@@ -30,7 +31,11 @@ pub mod tensor;
 pub use atlas::{metric_agrees_across_transition, Atlas, ChartId, TransitionMap};
 pub use chart::Chart;
 pub use error::ComponentError;
+pub use geodesic_render::{render_geodesic, render_geodesic_solved, render_geodesic_solved_structured, render_geodesic_structured};
 pub use grid::Grid;
 pub use holonomy::{ChristoffelPrograms, integrate_geodesic_with_transport};
-pub use render::{classify_grid, classify_tensor, render_classes, ComponentClass};
+pub use render::{
+    classify_grid, classify_tensor, render_classes, render_classes_structured, ComponentClass, RenderedClasses, RenderedComponent,
+    CHRISTOFFEL_VARIANCE, RICCI_VARIANCE, RIEMANN_COV_VARIANCE, RIEMANN_MIXED_VARIANCE,
+};
 pub use tensor::ComponentTensor;

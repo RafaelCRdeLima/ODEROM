@@ -27,6 +27,21 @@ pub enum Target {
     /// UI, see DESIGN-UI.md) would need -- keeping that door open is
     /// cheaper than reopening it later.
     Json,
+    /// Mathematica/Wolfram Language source (Rodada Exportação): `^` for
+    /// power, `Sin[x]`-style capitalized bracketed function calls,
+    /// `f[r]`/`f'[r]` for an indeterminate function and its derivative.
+    /// A renderer, not a re-simplification -- the expression is printed
+    /// exactly as the engine already normalized it, only the surface
+    /// syntax changes. See `oderom-expr::export` for the reserved-word
+    /// collision check (`E`, `Pi`, `I`, `D`, `N`, ...) this target needs
+    /// that no other target does.
+    Mathematica,
+    /// SymPy (Python) source: `**` for power, always-explicit `*`
+    /// (SymPy never accepts bare juxtaposition), lowercase `sin(x)`-style
+    /// function calls, `Function('f')(r)`/`Derivative(f(r), r)` for an
+    /// indeterminate function and its derivative. Same renderer-not-
+    /// resimplifier discipline as [`Target::Mathematica`].
+    Sympy,
 }
 
 /// Something that can render itself in any [`Target`] format.

@@ -1,0 +1,15 @@
+# De Sitter spacetime in flat (planar) slicing: ds^2 = -dt^2 +
+# exp(2*H*t)*(dx^2+dy^2+dz^2). Exercises `exp` as a metric component
+# with a non-trivial argument (H*t) and its derivative (d/dt exp(H*t) =
+# H*exp(H*t)) through a real Christoffel/Ricci/Kretschmann computation.
+# Constant curvature: expected Ricci scalar 12*H^2 (R = n(n-1)H^2 in n=4
+# spacetime dimensions).
+manifold M dim 4
+bundle TM on M dim 4
+chart flat on M coords (t, x, y, z)
+metric g on flat bundle TM {
+  [t,t] = -1,
+  [x,x] = exp(2*H*t),
+  [y,y] = exp(2*H*t),
+  [z,z] = exp(2*H*t)
+}

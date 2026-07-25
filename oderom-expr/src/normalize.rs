@@ -45,23 +45,81 @@
 //! so this terminates.
 
 use crate::Expr;
-use oderom_core::Scalar;
-use std::collections::BTreeMap;
 
-const MAX_ITERS: usize = 64;
-
-/// Rewrites `e` to normal form (see module docs).
-pub fn normalize(e: &Expr) -> Expr {
-    let mut cur = e.clone();
-    for _ in 0..MAX_ITERS {
-        let next = step(&cur);
-        if next == cur {
-            return next;
-        }
-        cur = next;
-    }
-    cur
+thread_local! {
+    static USE_LEGACY: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
+
+/// Cached once per thread (checking an env var on every `normalize()`
+/// call would be wasteful, and this crate's own `ODEROM_REDUCE_STATS`
+/// timing already establishes that pattern). Set `ODEROM_ENGINE=legacy`
+/// to use the pre-rational-form engine instead of the default.
+fn use_legacy() -> bool {
+    USE_LEGACY.with(|c| {
+        if let Some(v) = c.get() {
+            return v;
+        }
+        let v = std::env::var("ODEROM_ENGINE").as_deref() == Ok("legacy");
+        c.set(Some(v));
+        v
+    })
+}
+
+/// Rewrites `e` to normal form (see module docs and
+/// DESIGN-RATIONAL-FORM.md): converts to a canonical
+/// [`crate::rational_function::RationalFunction`] over one per-call
+/// [`crate::poly::AtomTable`], reduces by polynomial GCD (subresultant
+/// PRS, plus recursive multivariate GCD for content), converts back.
+///
+/// `legacy_v1` (below) is the original ad hoc rewrite-to-fixed-point
+/// engine this replaced -- kept deliberately, not deleted, as an escape
+/// hatch (`ODEROM_ENGINE=legacy`) and as a permanent differential oracle
+/// (`v1_and_v2_agree`, in this module's tests, keeps comparing the two on
+/// every CI run for as long as both exist). It cannot represent
+/// Reissner-Nordstrom's Kretschmann scalar at all (the computation that
+/// motivated the rational-form engine in the first place: naive
+/// expression swell, no GCD reduction ever), which is why this is a
+/// one-way default switch, not a coin flip -- but per DESIGN-RATIONAL-
+/// FORM.md, some metrics still make the recursive multivariate GCD's
+/// cost blow up (dense, not sparse/modular): not by free-parameter count
+/// alone (an earlier note said "three or more" -- real usage falsified
+/// that with a 2-parameter counterexample), but by how little structural
+/// cancellation is available to it, e.g. a metric whose `g_tt`/`g_rr`
+/// are not reciprocal loses cancellation the textbook `-f dt^2 + f^-1
+/// dr^2` form gets for free. `ODEROM_ENGINE=legacy` does not help there
+/// since legacy_v1 cannot handle even two-parameter metrics with real
+/// GCD reduction.
+pub fn normalize(e: &Expr) -> Expr {
+    if use_legacy() {
+        legacy_v1::normalize_v1(e)
+    } else {
+        crate::canonical::normalize_via_rational_form(e)
+    }
+}
+
+/// The original ad hoc rewrite-to-fixed-point engine. Not the default
+/// anymore (see `normalize` above), but deliberately not deleted --
+/// reachable via `ODEROM_ENGINE=legacy` and permanently exercised by the
+/// `v1_and_v2_agree` differential test below for as long as both engines
+/// exist.
+mod legacy_v1 {
+    use super::*;
+    use crate::BigScalar;
+    use std::collections::BTreeMap;
+
+    const MAX_ITERS: usize = 64;
+
+    pub(crate) fn normalize_v1(e: &Expr) -> Expr {
+        let mut cur = e.clone();
+        for _ in 0..MAX_ITERS {
+            let next = step(&cur);
+            if next == cur {
+                return next;
+            }
+            cur = next;
+        }
+        cur
+    }
 
 fn step(e: &Expr) -> Expr {
     match e {
@@ -71,17 +129,31 @@ fn step(e: &Expr) -> Expr {
         Expr::Pow(base, n) => simplify_pow(step(base), *n),
         Expr::Sin(inner) => Expr::Sin(Box::new(step(inner))),
         Expr::Cos(inner) => Expr::Cos(Box::new(step(inner))),
+        // legacy_v1 never had D-RF.7's sin^2+cos^2=1 rewrite either --
+        // just recurse into the argument, same as Sin/Cos above. No
+        // asymmetry introduced: this engine has never known any
+        // cross-atom identity, for any transcendental.
+        Expr::Exp(inner) => Expr::Exp(Box::new(step(inner))),
+        Expr::Sinh(inner) => Expr::Sinh(Box::new(step(inner))),
+        Expr::Cosh(inner) => Expr::Cosh(Box::new(step(inner))),
+        // Same reasoning as Sin/Cos/Exp/Sinh/Cosh above: legacy_v1 knows
+        // no cross-atom identity for any transcendental, and an
+        // indeterminate function has no identity at all (not even a
+        // deferred one) -- just recurse into each argument.
+        Expr::Func { name, args, order } => {
+            Expr::Func { name: name.clone(), args: args.iter().map(step).collect(), order: order.clone() }
+        }
     }
 }
 
 /// Splits a (already-simplified) term into a rational coefficient and the
 /// remaining "shape", e.g. `Mul([Rational(3), x])` -> `(3, x)`, a bare
 /// `Rational(3)` -> `(3, one())`, and anything else -> `(1, term)`.
-fn split_coeff(term: Expr) -> (Scalar, Expr) {
+fn split_coeff(term: Expr) -> (BigScalar, Expr) {
     match term {
         Expr::Rational(s) => (s, Expr::one()),
         Expr::Mul(factors) => {
-            let mut coeff = Scalar::ONE;
+            let mut coeff = BigScalar::one();
             let mut rest = Vec::with_capacity(factors.len());
             for f in factors {
                 if let Expr::Rational(s) = f {
@@ -97,20 +169,20 @@ fn split_coeff(term: Expr) -> (Scalar, Expr) {
             };
             (coeff, rest)
         }
-        other => (Scalar::ONE, other),
+        other => (BigScalar::one(), other),
     }
 }
 
 /// Rebuilds `coeff * rest`, merging into an existing `Mul` rather than
 /// nesting one, and collapsing away a coefficient of 1 / a `rest` of 1.
-fn scale(coeff: Scalar, rest: Expr) -> Expr {
+fn scale(coeff: BigScalar, rest: Expr) -> Expr {
     if coeff.is_zero() {
         return Expr::zero();
     }
     if rest == Expr::one() {
         return Expr::Rational(coeff);
     }
-    if coeff == Scalar::ONE {
+    if coeff == BigScalar::one() {
         return rest;
     }
     match rest {
@@ -132,7 +204,7 @@ fn scale(coeff: Scalar, rest: Expr) -> Expr {
 fn canonical_sum_sign(terms: &[Expr]) -> (Vec<Expr>, i32) {
     match terms.first() {
         None => (terms.to_vec(), 1),
-        Some(first) if split_coeff(first.clone()).0.numerator() >= 0 => (terms.to_vec(), 1),
+        Some(first) if !split_coeff(first.clone()).0.is_negative() => (terms.to_vec(), 1),
         Some(_) => {
             let mut negated: Vec<Expr> = terms
                 .iter()
@@ -176,11 +248,11 @@ fn simplify_add_basic(terms: Vec<Expr>) -> Vec<Expr> {
         }
     }
 
-    let mut grouped: BTreeMap<Expr, Scalar> = BTreeMap::new();
+    let mut grouped: BTreeMap<Expr, BigScalar> = BTreeMap::new();
     for t in flat {
         let (coeff, rest) = split_coeff(t);
-        let entry = grouped.entry(rest).or_insert(Scalar::ZERO);
-        *entry = *entry + coeff;
+        let entry = grouped.entry(rest).or_insert(BigScalar::zero());
+        *entry = entry.clone() + coeff;
     }
 
     grouped.into_iter().filter(|(_, c)| !c.is_zero()).map(|(rest, coeff)| scale(coeff, rest)).collect()
@@ -369,7 +441,7 @@ fn as_term_list(expr: &Expr) -> Vec<Expr> {
 /// necessarily changes for every term): this assumes multiplying every
 /// term of `base^n`'s expansion by the same `Q` doesn't reorder them
 /// relative to each other, true of the monomial `Q`s this exists for.
-fn divide_by_expanded_power(numerator: &Expr, base: &Expr, n: i32) -> Option<Expr> {
+pub(super) fn divide_by_expanded_power(numerator: &Expr, base: &Expr, n: i32) -> Option<Expr> {
     if n <= 0 {
         return None;
     }
@@ -417,7 +489,7 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
         }
     }
 
-    let mut coeff = Scalar::ONE;
+    let mut coeff = BigScalar::one();
     let mut bases: BTreeMap<Expr, i32> = BTreeMap::new();
     for f in flat {
         let (base, exp) = match f {
@@ -425,7 +497,7 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
             other => (other, 1),
         };
         if let Expr::Rational(s) = &base {
-            match scalar_pow(*s, exp) {
+            match scalar_pow(s.clone(), exp) {
                 Some(folded) => {
                     coeff = coeff * folded;
                     continue;
@@ -448,7 +520,7 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
         if let Expr::Add(terms) = &base {
             let (canon_terms, sign) = canonical_sum_sign(terms);
             if sign < 0 {
-                if let Some(folded) = scalar_pow(Scalar::new(-1, 1), exp) {
+                if let Some(folded) = scalar_pow(BigScalar::new(-1, 1), exp) {
                     coeff = coeff * folded;
                 }
                 *bases.entry(Expr::Add(canon_terms)).or_insert(0) += exp;
@@ -507,7 +579,7 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
         if exp > 1 {
             rest.push(Expr::Pow(Box::new(sum_base), exp - 1));
         }
-        if coeff != Scalar::ONE {
+        if coeff != BigScalar::one() {
             rest.push(Expr::Rational(coeff));
         }
 
@@ -528,7 +600,7 @@ fn simplify_mul(factors: Vec<Expr>) -> Expr {
         .collect();
     out.sort();
 
-    if coeff != Scalar::ONE {
+    if coeff != BigScalar::one() {
         out.insert(0, Expr::Rational(coeff));
     }
 
@@ -547,7 +619,7 @@ fn simplify_pow(base: Expr, n: i32) -> Expr {
         return base;
     }
     match base {
-        Expr::Rational(s) => match scalar_pow(s, n) {
+        Expr::Rational(s) => match scalar_pow(s.clone(), n) {
             Some(folded) => Expr::Rational(folded),
             None => Expr::Pow(Box::new(Expr::Rational(s)), n),
         },
@@ -565,22 +637,85 @@ fn simplify_pow(base: Expr, n: i32) -> Expr {
     }
 }
 
-fn scalar_pow(s: Scalar, n: i32) -> Option<Scalar> {
+fn scalar_pow(s: BigScalar, n: i32) -> Option<BigScalar> {
     if n == 0 {
-        return Some(Scalar::ONE);
+        return Some(BigScalar::one());
     }
     let (base, n) = if n < 0 { (s.recip()?, -n) } else { (s, n) };
-    let mut acc = Scalar::ONE;
+    let mut acc = BigScalar::one();
     for _ in 0..n {
-        acc = acc * base;
+        acc = acc * base.clone();
     }
     Some(acc)
 }
+} // mod legacy_v1
 
 #[cfg(test)]
 mod tests {
+    use super::legacy_v1::normalize_v1;
     use super::*;
     use crate::Expr;
+
+    /// Documents a real property found while building the exact-rational
+    /// differential oracle (see `TrigMemo`'s doc comment): `normalize()`
+    /// does not fold every value-equal placement of a constant scale
+    /// factor around `Pow(-1)` into one canonical shape. Not a
+    /// correctness bug -- both sides are individually valid, reduced
+    /// `RationalFunction`s for the same value -- but worth a permanent
+    /// regression marker so this is never "rediscovered" as a surprise;
+    /// `assert_ne!` (not `assert_eq!`) because the different shape is the
+    /// documented, current behavior, not a bug to fix here.
+    #[test]
+    fn normalize_does_not_canonicalize_scale_factor_placement_around_pow_neg1() {
+        let x = Expr::var("x");
+        let half_times_inverse = Expr::rational(1, 2) * x.clone().pow(-1);
+        let inverse_of_double = Expr::Pow(Box::new(Expr::int(2) * x), -1);
+        assert_ne!(normalize(&half_times_inverse), normalize(&inverse_of_double));
+    }
+
+    /// Answers the question the non-canonical-shape finding above raises
+    /// (session request: "measure with a constructed case, don't
+    /// estimate"): does the shape ambiguity ever survive as a
+    /// *non-zero-looking* result for a quantity that is genuinely zero,
+    /// which would make `Expr::is_zero()` under-report -- exactly what
+    /// `render_classes` (`oderom-components/src/render.rs`) uses to
+    /// count "N components identically zero"? Constructed to mirror the
+    /// real pipeline's actual pattern (`christoffel`/`riemann_mixed`:
+    /// normalize a component, store it, combine several *already-
+    /// normalized* stored components into a fresh sum, normalize that
+    /// sum again) rather than testing the two shapes in isolation.
+    ///
+    /// Result: benign. `half_times_inverse` and `inverse_of_double` are
+    /// each normalized and stored first (as `christoffel`'s `Grid::set`
+    /// would), then combined with opposite sign into one new `Add` and
+    /// normalized again (as `riemann_mixed`'s own combination step
+    /// would) -- and that second `normalize()` call *does* produce
+    /// exactly `Rational(0)`. Mechanism, traced in `rational_function.rs`:
+    /// whichever surface shape a sub-expression has, `expr_to_rational`
+    /// re-derives its actual `RationalFunction` value from scratch, not
+    /// from its printed form; `expr_to_rational`'s `Add` case
+    /// accumulates a whole sum into one `(num, den)` pair via exact
+    /// `Poly` cross-multiplication, and `reduce_inner_candidate`'s very
+    /// first check is `if num.is_zero() { return .. 0 .. }`, unconditional
+    /// on whatever shape `den` ended up in. The shape ambiguity (root
+    /// cause: `BigScalar::gcd` returns a unit for any non-integer input,
+    /// so `poly_gcd` never rescales a fractional leading coefficient) is
+    /// real, but it only ever affects which of several equally-reduced
+    /// *non-zero* forms gets rendered -- it cannot produce a "not
+    /// obviously zero" result for something that truly is zero, because
+    /// exact cancellation happens one level below any such rendering
+    /// choice, in the `Poly` coefficient arithmetic itself.
+    #[test]
+    fn shape_ambiguity_around_pow_neg1_does_not_survive_as_a_false_nonzero() {
+        let x = Expr::var("x");
+        let stored_a = normalize(&(Expr::rational(1, 2) * x.clone().pow(-1)));
+        let stored_b = normalize(&Expr::Pow(Box::new(Expr::int(2) * x), -1));
+        assert_ne!(stored_a, stored_b, "test assumption: the two stored forms must actually differ in shape");
+
+        let combined_later = stored_a + Expr::int(-1) * stored_b;
+        let result = normalize(&combined_later);
+        assert!(result.is_zero(), "shape ambiguity DID survive as a false non-zero: {result:?} -- not benign, needs a README limitation, not this comment");
+    }
 
     #[test]
     fn folds_rational_arithmetic() {
@@ -606,7 +741,7 @@ mod tests {
             + Expr::int(1152) * m.pow(4) * r.pow(-8);
         let numerator = normalize(&numerator);
 
-        let quotient = divide_by_expanded_power(&numerator, &f, 4);
+        let quotient = legacy_v1::divide_by_expanded_power(&numerator, &f, 4);
         let expected = Expr::int(48) * Expr::var("M").pow(2) * Expr::var("r").pow(-6);
         assert_eq!(quotient, Some(normalize(&expected)));
     }
@@ -713,5 +848,320 @@ mod tests {
         let once = normalize(&e);
         let twice = normalize(&once);
         assert_eq!(once, twice);
+    }
+
+    // ---------------------------------------------------------------
+    // Differential test (DESIGN-RATIONAL-FORM.md section 4 step 5): the
+    // primary safety net for replacing normalize()'s internals, and (per
+    // an explicit, permanent requirement) kept running for as long as
+    // both engines exist -- `ODEROM_ENGINE=legacy` is the escape hatch
+    // `normalize_v1` backs.
+    //
+    // Compares by VALUE (evaluate both sides at several sample points),
+    // not structural equality: the two engines have different, each
+    // internally valid, canonical forms for rational expressions (`v2`
+    // always fully reduces to one num/den pair via polynomial GCD; `v1`
+    // keeps an unreduced sum -- or a different sign/exponent convention
+    // -- when it doesn't find a cancellation the way `v2`'s GCD does).
+    // Confirmed real, not a loophole: several genuine structural
+    // mismatches were found this way that were NOT value bugs (e.g.
+    // `Pow(x,-2)` vs `Pow(Pow(x,2),-1)`, or `1-x` vs `-1*(x-1)` --
+    // algebraically identical, different sign convention chosen). What
+    // this must still catch, and does: any case where the two engines
+    // disagree on the actual VALUE, which is the only property that
+    // still has to hold as a differential oracle now that structural
+    // equality is no longer expected.
+    // ---------------------------------------------------------------
+
+    // Replaces an earlier f64-based oracle (kept in git history, not
+    // here): it evaluated `Sin(arg)`/`Cos(arg)` via real `.sin()`/
+    // `.cos()` on `arg`'s own evaluated float, which does satisfy
+    // sin^2+cos^2=1 for a genuine angle -- but the rest of the tree
+    // (Add/Mul/Pow on possibly near-singular quantities) still ran in
+    // f64, and near sin(M) close to -1 (found: `(1+sin(M))^-3` around
+    // `M=-1.6`) catastrophic cancellation made two *algebraically equal*
+    // results differ in the 6th decimal digit, past the tolerance, on a
+    // sporadic proptest case that has to keep passing every run -- a
+    // flaky property test is a property test someone disables. The oracle
+    // itself was the bug, not the engines.
+    //
+    // No float anywhere below: `BigScalar` is exact arbitrary-precision
+    // rational (`crate::BigScalar`, already what `Expr::Rational` holds),
+    // and `Sin(arg)`/`Cos(arg)` are given exact rational values via the
+    // standard rational parametrization of the unit circle -- for a
+    // rational `t`, `cos = (1-t^2)/(1+t^2)`, `sin = 2t/(1+t^2)` satisfies
+    // `sin^2+cos^2=1` identically (verify: `(1-t^2)^2+(2t)^2 =
+    // 1-2t^2+t^4+4t^2 = 1+2t^2+t^4 = (1+t^2)^2`), and `1+t^2 >= 1` for
+    // every rational `t`, so this parametrization's own denominator is
+    // never zero -- the only way to hit an exact pole is the *outer*
+    // expression genuinely dividing by zero at this point, which is
+    // exactly the case this oracle already needs to detect (and skip,
+    // never guess at) as a shared removable singularity.
+    //
+    // One `t` per *syntactically distinct* Sin/Cos argument, not per
+    // node: memoized by `normalize(arg)` (never the raw `arg`), matching
+    // exactly the key `AtomTable` interns Sin/Cos atoms by (D-RF.6) --
+    // two arguments that are the same after normalizing get the same
+    // `t` and therefore the same value, two that are not get independent
+    // `t`s, precisely mirroring what the engine itself considers "the
+    // same trig atom" instead of a coarser or finer notion the oracle
+    // invented on its own. Assignment order is deterministic (a fixed
+    // pool, cycled), not RNG -- proptest's shrinking reruns a failing
+    // case many times and needs the same case to evaluate the same way
+    // every time.
+    use crate::BigScalar;
+    use std::collections::HashMap;
+
+    fn pow_exact(base: BigScalar, n: i32) -> Option<BigScalar> {
+        if n == 0 {
+            return Some(BigScalar::one());
+        }
+        let mut acc = BigScalar::one();
+        for _ in 0..n.unsigned_abs() {
+            acc = acc * base.clone();
+        }
+        if n < 0 { acc.recip() } else { Some(acc) }
+    }
+
+    /// `(cos, sin)` for one rational `t`, via the parametrization above.
+    fn cos_sin_of_t(t: &BigScalar) -> (BigScalar, BigScalar) {
+        let t2 = t.clone() * t.clone();
+        let denom = BigScalar::one() + t2.clone();
+        let inv = denom.clone().recip().expect("1+t^2 is never zero for a rational t");
+        let cos = (BigScalar::one() - t2) * inv.clone();
+        let sin = (BigScalar::new(2, 1) * t.clone()) * inv;
+        (cos, sin)
+    }
+
+    /// A handful of small distinct rationals to assign as `t`, cycled --
+    /// enough variety that a coincidental algebraic relation at one `t`
+    /// is very unlikely to also hold at the next one tried.
+    const T_POOL: &[(i64, i64)] = &[(2, 1), (-3, 1), (1, 3), (5, 2), (-1, 4), (7, 1), (-4, 3), (3, 5)];
+
+    /// Keyed by `arg`'s own *evaluated numeric value* at this sample
+    /// point, not by `arg`'s symbolic form (an earlier version of this
+    /// oracle keyed by `normalize(arg)`, mirroring how `AtomTable`
+    /// interns Sin/Cos atoms -- wrong here: found, by that version
+    /// promptly failing, that `normalize()` does not put every
+    /// value-equal argument into one canonical shape, e.g. `(1/2)*x^-1`
+    /// stays `Mul([1/2, Pow(x,-1)])` while `(2*x)^-1` stays
+    /// `Pow(Mul([2,x]),-1)` -- same rational function, two different
+    /// trees, so keying by the normalized tree assigned them two
+    /// unrelated `t`s and manufactured a disagreement between two
+    /// engines that were both right. Keying by the evaluated *value*
+    /// sidesteps the question of how canonical `normalize()`'s output is
+    /// altogether: whatever symbolic form `arg` takes, if it evaluates to
+    /// the same rational number here, it gets the same `t` -- which is
+    /// also exactly what this oracle's very first (float) version did
+    /// (`eval(arg,vars).sin()`), just exact now instead of approximate.
+    struct TrigMemo {
+        assigned: HashMap<BigScalar, (BigScalar, BigScalar)>,
+        next: usize,
+    }
+
+    impl TrigMemo {
+        fn new(seed_offset: usize) -> Self {
+            TrigMemo { assigned: HashMap::new(), next: seed_offset }
+        }
+
+        fn cos_sin(&mut self, arg_value: BigScalar) -> (BigScalar, BigScalar) {
+            if let Some(v) = self.assigned.get(&arg_value) {
+                return v.clone();
+            }
+            let (num, den) = T_POOL[self.next % T_POOL.len()];
+            self.next += 1;
+            let t = BigScalar::new(num, den);
+            let v = cos_sin_of_t(&t);
+            self.assigned.insert(arg_value, v.clone());
+            v
+        }
+    }
+
+    fn eval_exact(e: &Expr, vars: &[(&str, BigScalar)], trig: &mut TrigMemo) -> Option<BigScalar> {
+        match e {
+            Expr::Rational(s) => Some(s.clone()),
+            Expr::Var(name) => vars.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone()),
+            Expr::Add(terms) => {
+                let mut acc = BigScalar::zero();
+                for t in terms {
+                    acc = acc + eval_exact(t, vars, trig)?;
+                }
+                Some(acc)
+            }
+            Expr::Mul(factors) => {
+                let mut acc = BigScalar::one();
+                for f in factors {
+                    acc = acc * eval_exact(f, vars, trig)?;
+                }
+                Some(acc)
+            }
+            Expr::Pow(base, n) => pow_exact(eval_exact(base, vars, trig)?, *n),
+            Expr::Sin(arg) => {
+                let v = eval_exact(arg, vars, trig)?;
+                Some(trig.cos_sin(v).1)
+            }
+            Expr::Cos(arg) => {
+                let v = eval_exact(arg, vars, trig)?;
+                Some(trig.cos_sin(v).0)
+            }
+            // No exact-rational oracle for exp/sinh/cosh: sin/cos get
+            // one specifically because the tangent-half-angle
+            // parametrization (`cos_sin_of_t`) makes `sin`/`cos` of a
+            // RATIONAL parameter exactly rational, satisfying the
+            // identity by construction. There is no analogous trick for
+            // a genuinely transcendental function of a rational argument
+            // (`exp`/`sinh`/`cosh` of a nonzero rational is essentially
+            // never rational) -- so `arb_expr` below deliberately never
+            // generates these three, and this arm is never actually
+            // exercised by the fuzzer. `None` (not a float
+            // approximation, and not `unreachable!()`) is still the
+            // right answer if that ever changes without this arm being
+            // revisited: the same "can't evaluate here" meaning already
+            // used for a pole on either side (see `values_agree`'s own
+            // comment), never a silent wrong answer.
+            // Same reasoning as Exp/Sinh/Cosh above, one step further: an
+            // indeterminate function has no value at all, exact or
+            // otherwise -- `arb_expr` below never generates one, so this
+            // arm is likewise never actually exercised.
+            Expr::Exp(_) | Expr::Sinh(_) | Expr::Cosh(_) | Expr::Func { .. } => None,
+        }
+    }
+
+    /// Exact rational sample points -- none of them small integers, same
+    /// reasoning as before (this generator's leaves are `-5..=5`, so an
+    /// integer point is the most likely to accidentally land on a
+    /// removable singularity both sides happen to share), plus a
+    /// distinct `T_POOL` starting offset per point so the *trig* values
+    /// vary across points too, not just the plain variables.
+    fn sample_points() -> Vec<(Vec<(&'static str, BigScalar)>, usize)> {
+        vec![
+            (vec![("x", BigScalar::new(13, 10)), ("y", BigScalar::new(-27, 10)), ("M", BigScalar::new(6, 10)), ("r", BigScalar::new(31, 10))], 0),
+            (vec![("x", BigScalar::new(-42, 10)), ("y", BigScalar::new(11, 10)), ("M", BigScalar::new(29, 10)), ("r", BigScalar::new(-8, 10))], 3),
+            (vec![("x", BigScalar::new(4, 10)), ("y", BigScalar::new(55, 10)), ("M", BigScalar::new(-16, 10)), ("r", BigScalar::new(22, 10))], 6),
+        ]
+    }
+
+    /// Both sides agree, exactly, at every sample point where both are
+    /// defined (a point landing on a pole either side's *own*
+    /// denominator has isn't a disagreement -- both engines are still
+    /// correct there, `Expr` just doesn't evaluate a pole). No tolerance
+    /// anywhere: exact rational equality, or an exact pole on one or
+    /// both sides.
+    fn values_agree(a: &Expr, b: &Expr) -> Result<(), String> {
+        for (point, seed_offset) in sample_points() {
+            let mut trig = TrigMemo::new(seed_offset);
+            let va = eval_exact(a, &point, &mut trig);
+            let vb = eval_exact(b, &point, &mut trig);
+            if let (Some(va), Some(vb)) = (va, vb) {
+                if va != vb {
+                    return Err(format!("at {point:?}: {va:?} != {vb:?}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    use proptest::prelude::*;
+
+    /// Deliberately never generates `Exp`/`Sinh`/`Cosh`: this whole
+    /// differential oracle (`v1_and_v2_agree`/`v2_is_idempotent` below)
+    /// depends on `eval_exact` being able to evaluate every generated
+    /// tree to an EXACT rational at each sample point, which only works
+    /// for `sin`/`cos` because of the tangent-half-angle parametrization
+    /// trick (`TrigMemo`) -- there is no equivalent for a genuinely
+    /// transcendental function, so adding them here would need a new
+    /// evaluation scheme this crate does not have, not a one-line
+    /// addition. Correctness for the three new functions instead comes
+    /// from the targeted, real-curvature tests next to their own
+    /// implementation (`oderom-components` fixtures), per the scope
+    /// decided for that round.
+    fn arb_expr() -> impl Strategy<Value = Expr> {
+        let leaf = prop_oneof![
+            (-5i64..=5).prop_map(Expr::int),
+            prop_oneof![Just("x"), Just("y"), Just("M"), Just("r")].prop_map(Expr::var),
+        ];
+        leaf.prop_recursive(4, 32, 3, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 2..=3).prop_map(Expr::Add),
+                proptest::collection::vec(inner.clone(), 2..=3).prop_map(Expr::Mul),
+                // Clamped to +-1 when `b` is itself a `cos(...)`: `poly_gcd`
+                // no longer mishandles cos^2-of-the-same-argument (fixed,
+                // `TrigRewriteSuppressor` above) -- this clamp is
+                // deliberate defense in depth, not a workaround for a
+                // known-broken case, so that routine fuzzing runs spend
+                // their budget on the far larger space of *other* shapes
+                // instead of repeatedly re-exercising this one already-hard
+                // (and now separately regression-tested, see
+                // `cos_squared_of_the_same_argument_inside_a_gcd_used_to_break_subresultant_prs`
+                // below) code path on every run.
+                (inner.clone(), -3i32..=3).prop_map(|(b, n)| {
+                    let n = if matches!(b, Expr::Cos(_)) { n.clamp(-1, 1) } else { n };
+                    if n == 0 { Expr::one() } else { Expr::Pow(Box::new(b), n) }
+                }),
+                inner.clone().prop_map(|e| e.sin()),
+                inner.prop_map(|e| e.cos()),
+            ]
+        })
+    }
+
+    /// Regression test for the exact minimal case property-based fuzzing
+    /// found (`proptest-regressions/normalize.txt`, seed
+    /// `672e22ba5716...`): squaring a leading coefficient that contains
+    /// `cos(0)` mid-`poly_gcd` used to trigger D-RF.7's `cos^2 ->
+    /// 1-sin^2` rewrite *inside* subresultant PRS, changing the
+    /// coefficient ring out from under the algorithm's own degree
+    /// bookkeeping and leaving a genuinely non-exact `beta_i` division
+    /// (verified independently outside Rust: exact in the free ring
+    /// Q[cos(t)][x], not exact once cos^2 gets reduced mid-computation).
+    /// Fixed by `TrigRewriteSuppressor` (DESIGN-RATIONAL-FORM.md section
+    /// 6): the rewrite is suppressed for `poly_gcd`'s entire recursive
+    /// descent and reapplied exactly once, via `Poly::normalize_trig`, on
+    /// its final result.
+    #[test]
+    fn cos_squared_of_the_same_argument_inside_a_gcd_used_to_break_subresultant_prs() {
+        let e = Expr::Add(vec![
+            Expr::int(0).cos(),
+            Expr::Pow(Box::new(Expr::Add(vec![Expr::var("r"), Expr::var("x")])), -3),
+            Expr::Add(vec![Expr::var("r"), Expr::int(-1)]),
+        ]);
+        let _ = normalize(&e);
+    }
+
+    proptest! {
+        // 256 (proptest's default) comprovadamente deixa bug passar: a
+        // regressão `(0^-1)^-1` (reduce_inner's constant-denominator fold
+        // missing a `den.is_zero()` guard, silently turning 0^-1 into 1)
+        // só apareceu rodando manualmente com PROPTEST_CASES=4000 --
+        // nunca teria sido pega no default. Estes dois testes são os
+        // únicos invariantes do motor novo (concordância por valor com
+        // o legado, idempotência), não dois entre muitos, e são baratos
+        // (a suíte inteira do workspace continua rodando em segundos com
+        // isso ligado) -- sem motivo para economizar aqui. Mesma
+        // convenção de `oderom-canon/tests/prop_canon.rs`.
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        #[test]
+        fn v1_and_v2_agree(e in arb_expr()) {
+            let v1 = normalize_v1(&e);
+            let v2 = normalize(&e);
+            if let Err(msg) = values_agree(&v1, &v2) {
+                prop_assert!(false, "value disagreement normalizing {:?}: {msg} (v1={:?} v2={:?})", e, v1, v2);
+            }
+        }
+
+        /// Both engines must be idempotent by VALUE -- normalizing an
+        /// already normalized expression must not change what it
+        /// evaluates to (structural idempotence is not guaranteed to the
+        /// same degree: e.g. a sign-convention choice between `1-x` and
+        /// `-1*(x-1)`-shaped results can differ round to round without
+        /// either being wrong).
+        #[test]
+        fn v2_is_idempotent(e in arb_expr()) {
+            let once = normalize(&e);
+            let twice = normalize(&once);
+            if let Err(msg) = values_agree(&once, &twice) {
+                prop_assert!(false, "value changed on re-normalizing {:?}: {msg} (once={:?} twice={:?})", e, once, twice);
+            }
+        }
     }
 }

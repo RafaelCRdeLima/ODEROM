@@ -1,0 +1,39 @@
+// GENERATED FILE -- do not edit by hand. Written to `dist/oderom-mode.js`
+// by `oderom-app/src-tauri/build.rs` on every build, from
+// `oderom_cli::parser`'s own keyword lists -- see that file's own doc
+// comment for why. Edit THIS template (for structure/token categories)
+// or the Rust source (for which words belong in which category), then
+// rebuild; direct edits to `dist/oderom-mode.js` are overwritten.
+//
+// A lexical approximation of oderom_cli::parser's grammar, for display
+// highlighting only -- DESIGN-NOTEBOOK.md, Etapa 3a-2. Real parsing and
+// validation always happen in Rust, through the Tauri commands; this
+// mode is never consulted for anything but color. See
+// dist/vendor/README.md for why CodeMirror 5 has no built-in mode for
+// ODEROM's own grammar and this exists instead of one.
+CodeMirror.defineSimpleMode("oderom", {
+  start: [
+    { regex: /#.*/, token: "comment" },
+    {
+      regex: /\b(manifold|bundle|head|chart|metric|connection|on|dim|coords|symmetry|antisymmetric|symmetric)\b/,
+      token: "keyword",
+    },
+    {
+      regex: /\b(christoffel|riemann|ricci|scalar|kretschmann|geodesic|accel|einstein|riccisquare|gaussbonnet|weyl|weylsquare)\b/,
+      token: "keyword",
+    },
+    {
+      // `export`, its two symbolic targets (`mathematica`/`sympy`), and
+      // the index-variance marker's two words (`up`/`down`) -- Rodada
+      // Exportação/Variancia. A separate group from the query commands
+      // above (same "keyword" color; kept apart only so each list stays
+      // easy to regenerate/read on its own).
+      regex: /\b(export|mathematica|sympy|up|down)\b/,
+      token: "keyword",
+    },
+    { regex: /\\[a-zA-Z]+/, token: "atom" }, // LaTeX commands: \frac, \theta, \sin, ...
+    { regex: /-?\d+(\.\d+)?/, token: "number" },
+    { regex: /[a-zA-Z_][a-zA-Z0-9_]*/, token: "variable" },
+    { regex: /[+\-*/^=,[\]{}()]/, token: "operator" },
+  ],
+});

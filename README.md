@@ -1,4 +1,7 @@
-# ODEROM
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-on-dark.svg">
+  <img src="assets/logo-on-light.svg" alt="ODEROM" width="360">
+</picture>
 
 Operational Differential Engine for Riemannian Object Manipulation. See
 [DESIGN.md](DESIGN.md) (Marco 1), [DESIGN-M2.md](DESIGN-M2.md) (Marco 2),
@@ -98,6 +101,65 @@ recursing forever took three real bugs and fixes along the way -- each
 one is documented in place, in `oderom-expr/src/normalize.rs`'s module
 docs and the functions themselves, because each was exactly the kind of
 thing a future "simplification" could plausibly reintroduce.
+
+**Reissner-Nordström** (`f(r) = 1 - 2M/r + Q²/r²`, three terms instead of
+Schwarzschild's two) went further than local rewriting could reach at
+all: `oderom-expr`'s `normalize()` now routes internally through a
+rational-form engine (`Poly`/`RationalFunction`, subresultant PRS,
+recursive multivariate polynomial GCD -- see
+[DESIGN-RATIONAL-FORM.md](DESIGN-RATIONAL-FORM.md) for the design and
+the algorithm) instead of pattern-matching. Kretschmann of
+Reissner-Nordström now completes and matches the closed form
+`48M²/r⁶ - 96MQ²/r⁷ + 56Q⁴/r⁸` exactly
+(`oderom-components/tests/reissner_nordstrom.rs`, a permanent
+acceptance fixture, along with the pre-existing check that its Ricci
+*scalar* is zero despite the Ricci *tensor* being nonzero -- it's an
+electrovac solution, not vacuum). The previous local-rewriting engine
+remains in the codebase as `ODEROM_ENGINE=legacy` (an escape hatch and
+permanent differential-testing oracle, not dead code), since the new
+engine's canonical form is not always structurally identical to the
+old one -- both are compared by numeric value, not by exact `Expr`
+equality, in `oderom-expr/src/normalize.rs`'s `v1_and_v2_agree`.
+
+**Known limit, not a bug**: some metrics can make the recursive
+multivariate GCD's cost blow up. **Free parameter count alone is not
+the criterion** -- an earlier version of this note said "3 or more free
+parameters" (found via one synthetic four-term, reciprocal probe,
+generalized from that single case); real usage falsified it directly: a
+2-parameter metric (same count as Reissner-Nordström) with `g_tt`/`g_rr`
+*not* reciprocal hung for 60+s on the exact stage RN finishes in under a
+second. Four measured data points, not estimates
+(`oderom-session/tests/cancellation.rs` holds the two non-obvious ones
+as permanent regression fixtures):
+
+| `g_tt`/`g_rr` | free params | Kretschmann |
+|---|---|---|
+| reciprocal (RN: `f(r)=1-2M/r+Q²/r²`) | 2 (`M`,`Q`) | ~1s |
+| reciprocal (`f(r)=1-2M/r+Q²/r²-L²/r³`) | 3 (`M`,`Q`,`L`) | still running past 30s |
+| independent, 1 param each (`1-2M/r` vs `1-M/r`) | 1 (`M`) | ~1.2s |
+| independent, 2 params total (`1-2M/r+1/r²` vs `1-2M/r+Q²/r²`) | 2 (`M`,`Q`) | still running past 60s |
+
+The real cost driver is how much structural cancellation is available
+to `poly_gcd`'s recursive multivariate GCD, not a parameter tally by
+itself: the reciprocal ansatz `g_tt·g_rr = -1` (the textbook
+`-f dt² + f⁻¹ dr²` form) hands the GCD a large, guaranteed-shared factor
+across almost every intermediate term "for free," which is why RN's 2
+parameters are cheap but a non-reciprocal metric with the same 2
+parameters is not -- reciprocity buys roughly one parameter's worth of
+headroom, not immunity. Past that headroom (in either direction), the
+recursive GCD is dense; the next algorithmic step would be
+modular/sparse GCD (Zippel), which is where external libraries (FLINT,
+Symbolica) are the known answer -- see DESIGN-RATIONAL-FORM.md section
+6 for the full note. Guardrails keep this safe either way -- never a
+hang without recourse, never a wrong answer: the CLI's `--timeout`,
+`--max-nodes`, `--max-denominator-degree` for one-shot commands, and
+(DESIGN-UI-SESSION.md) the REPL's own `:timeout` plus Ctrl+C, backed by
+cancellation checks *inside* `normalize()`/`poly_gcd`/the subresultant
+PRS loop (`oderom-expr/src/cancel.rs`), not only between whole
+components -- a single component running away is exactly the case that
+surfaced this note. Trigger for reopening the external-library
+decision: a real problem in this regime blocking actual use, not the
+ceiling alone.
 
 ## Marco 3 status
 
@@ -300,7 +362,12 @@ layer handle an arbitrary metric from a file": the Marco 2 diagonal-only
 restriction (D-M2.1, DESIGN-M2.md) excludes null coordinates,
 Kerr-like off-diagonal terms, and -- the one the user flagged as the
 real future concern -- perturbation theory, since `g + h` is generically
-non-diagonal even when the background `g` is diagonal.
+non-diagonal even when the background `g` is diagonal. The second known
+ceiling, orthogonal to this one, is the rational-form normalizer's
+recursive-GCD limit described under "Marco 2 status" above (not simply
+free-parameter count -- see that section's table and
+DESIGN-RATIONAL-FORM.md section 6) -- a metric can trip either
+restriction independently of the other.
 
 Five subcommands, DESIGN-UI.md 6.4: `christoffel`, `riemann`, `ricci`,
 `scalar`, `kretschmann`, each taking a `.od` FILE plus `--metric`/
@@ -313,6 +380,101 @@ or a plain symmetric pair for Ricci) purely to route through
 mathematical fact of rank and symmetry, never something the user
 declares. `scalar`/`kretschmann` need `g^ab` and refuse cleanly
 (`NeedsMetric`) rather than compute a number from a bare `connection`.
+
+## UI status (notebook, Etapa 3)
+
+Full design in [DESIGN-NOTEBOOK.md](DESIGN-NOTEBOOK.md). A Mathematica-
+style block notebook, not the two-panel layout an earlier draft
+proposed: the document is a vertical sequence of blocks, each classified
+as a declaration or a query by its own leading keyword
+(`oderom_cli::parser::classify_block` -- one grammar, never two), never
+by a mode the user picks. The `Model` is reconstructed as a unit from
+every declaration block's *current* text whenever any one of them
+executes -- never an accumulation of individually-run definitions, which
+is exactly how invisible state would creep back in. A single broken
+declaration block blocks the whole reconstruction, on purpose -- the
+same atomicity `:reload` always had, just easier to hit now that
+declarations are split into independently-editable blocks.
+
+Two crates:
+
+- **`oderom-notebook`** -- all of the above, fully tested with no
+  window (block lifecycle, the three declaration states -- confirmed/
+  divergent/error --, error attribution down to which block caused a
+  failed reconstruction, save/load). Same relationship to
+  `oderom-session` that `oderom-repl` has.
+- **`oderom-app`** -- the Tauri shell (Etapa 3a-2): stacked, editable
+  blocks with syntax highlighting, Jupyter-style (not Mathematica-style)
+  execute keys -- Shift-Enter runs the block and moves focus to the
+  next one (or creates one, if it was the last), Ctrl-Enter runs it and
+  keeps focus put, Alt-Enter runs it and inserts a new block right
+  after regardless of what already follows -- output typeset via KaTeX
+  from the existing `Target::Latex`, create/edit/execute/delete a
+  block, save/open a notebook, opens with a Reissner-Nordstrom example
+  loaded (never blank) and the first block already focused. No Node:
+  CodeMirror 5 and KaTeX are vendored files (`oderom-app/dist/vendor/`,
+  versions and sources in that directory's own README), not a CDN and
+  not an npm dependency -- the window has to open with no network
+  access. All geometry/algebra/rendering-format decisions stay in Rust
+  (`oderom-notebook`/`oderom-session`/`oderom-cli`); the frontend's one
+  judgment call is a display-only split of an already-rendered LaTeX
+  string into per-line KaTeX-vs-plain-text (`oderom-app/dist/notebook.js`'s
+  own doc comment explains why that one decision lives in JS).
+
+**Visual design** follows a mockup, not defaults (`oderom-app/dist/notebook.css`'s
+own header comment has the full reasoning): a numbered gutter (`[n]`/
+`[ ]`) is a session-wide Jupyter-style execution counter
+(`Notebook::next_execution_count`, `Block::execution_count`) -- `[4]`
+means "the fourth execution this session," not "the fourth block," and
+an unexecuted block always shows `[ ]`, which is the point: it makes
+"nothing recomputes on its own" visible without having to explain it.
+The focused block gets a ring (`box-shadow` + border color), never a
+filled background, since a filled background fights the code's own
+syntax-highlight colors. Output has no card or border -- it sits loose
+below the block in a serif font, the way a result sits below a
+calculation on paper. The trailing empty block (always present) is
+styled with a dashed border and placeholder text as a permanent click
+target and reminder of how to start typing. A one-line status bar
+spells out the three execute shortcuts. Deliberately excluded: a
+background color per block kind (would become noise as the notebook
+grows) and a per-block mouse "run" button (would compete with the
+keyboard for exactly the gesture a notebook wants to encourage -- the
+trailing empty block plus Shift/Ctrl/Alt-Enter already cover every way
+to create or run a block). The header is a dark bar showing the
+project's mark (`assets/mark-on-dark.svg`, inlined in the DOM, not
+`<img src>`) and the current notebook's filename -- the full wordmark
+isn't used there since the filename already spells the name out as
+text right next to the mark, which would make it redundant; the full
+wordmark (`assets/logo-on-light.svg`/`-on-dark.svg`) is for the README
+and any future "about" screen instead. Desktop/taskbar icons are
+rasterized from `assets/icon-launcher-1024.svg` (see
+`assets/README.md` for the full source-to-build mapping, including the
+separately hand-tuned 32px/16px sources) into
+`oderom-app/src-tauri/icons/`, referenced by `tauri.conf.json`'s
+`bundle.icon`.
+
+**Tested through the real UI, not just the command handlers**
+(`oderom-app/src-tauri/tests/keymap.rs`): calling `execute_block`/
+`cm.focus()` directly would prove nothing about the keymap or focus
+wiring -- exactly the layer a real, live bug was found in during this
+feature's own development (a synthetic `KeyboardEvent` needs its legacy
+`keyCode` forced to match what a genuine keypress already has set, or
+CodeMirror 5 silently ignores it; confirmed by reading its source, not
+assumed). `ODEROM_APP_TEST=1` routes the real compiled binary to
+`dist/keytest.html` instead of `index.html` -- identical markup and
+`<script>` includes, so it drives the actual `notebook.js`/CodeMirror/
+KaTeX, never a reimplementation -- where `keytest.js` fires real,
+correctly-shaped DOM events (focus via synthetic mouse clicks, Enter
+via keydown events with `keyCode`/`which` forced) and reports back
+through a file (`ui_test_report`), the same channel `frontend_ready`
+already used. Needs a real display to run (`DISPLAY`/Wayland); skips
+itself with a clear message otherwise, so `cargo test --workspace`
+still passes in a headless CI runner without one -- not yet wired to
+run for real in CI (would need Xvfb or equivalent there), a known gap.
+
+Visible obsolescence, per-stage progress, and Cancel are Etapa 3b, not
+yet built -- the three declaration states already exist in
+`oderom-notebook` today but aren't styled differently on screen yet.
 
 ## Marco 1 status against the acceptance table
 

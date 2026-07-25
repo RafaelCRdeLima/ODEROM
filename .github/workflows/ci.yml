@@ -1,0 +1,45 @@
+name: CI
+
+# Runs the whole workspace test suite under BOTH Cargo profiles, not
+# just the debug profile `cargo test` defaults to. debug and release
+# genuinely differ in arithmetic (release does not check integer
+# overflow by default -- see the comment on `overflow-checks` in the
+# workspace Cargo.toml) and in timing-sensitive behavior (this project's
+# cancellation/guardrail tests measure real wall-clock latency, and a
+# few are calibrated against release-build speed specifically -- see
+# oderom-cli/tests/end_to_end.rs's `kretschmann_of_reissner_nordstrom_times_out_cleanly_instead_of_hanging`).
+# A change that only breaks one profile must fail CI, not wait for
+# someone to happen to run the other one locally.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# `oderom-app` (the Tauri shell, DESIGN-NOTEBOOK.md Etapa 3) needs
+# webkit2gtk's dev headers to build at all -- not installed on
+# ubuntu-latest by default. Same package list the shell's own
+# development machine installed locally.
+env:
+  TAURI_APT_DEPS: >-
+    libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
+    libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+jobs:
+  test-debug:
+    name: cargo test (debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y $TAURI_APT_DEPS
+      - run: cargo test --workspace
+
+  test-release:
+    name: cargo test (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y $TAURI_APT_DEPS
+      - run: cargo test --workspace --release

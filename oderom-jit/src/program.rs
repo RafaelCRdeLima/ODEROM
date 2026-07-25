@@ -39,6 +39,9 @@ pub enum Op {
     Pow(usize, i32),
     Sin(usize),
     Cos(usize),
+    Exp(usize),
+    Sinh(usize),
+    Cosh(usize),
 }
 
 impl Op {
@@ -68,6 +71,9 @@ impl Program {
                 Op::Pow(a, n) => values[a].powi(n),
                 Op::Sin(a) => values[a].sin(),
                 Op::Cos(a) => values[a].cos(),
+                Op::Exp(a) => values[a].exp(),
+                Op::Sinh(a) => values[a].sinh(),
+                Op::Cosh(a) => values[a].cosh(),
             };
         }
         values[self.output]

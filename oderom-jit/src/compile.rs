@@ -35,7 +35,7 @@ pub fn compile(expr: &Expr, vars: &[String]) -> Result<Program, JitError> {
 
 fn lower(expr: &Expr, vars: &[String], b: &mut Builder) -> Result<usize, JitError> {
     Ok(match expr {
-        Expr::Rational(s) => b.push(Op::constant(s.numerator() as f64 / s.denominator() as f64)),
+        Expr::Rational(s) => b.push(Op::constant(s.to_f64_lossy())),
         Expr::Var(name) => {
             let idx = vars
                 .iter()
@@ -77,6 +77,19 @@ fn lower(expr: &Expr, vars: &[String], b: &mut Builder) -> Result<usize, JitErro
             let id = lower(inner, vars, b)?;
             b.push(Op::Cos(id))
         }
+        Expr::Exp(inner) => {
+            let id = lower(inner, vars, b)?;
+            b.push(Op::Exp(id))
+        }
+        Expr::Sinh(inner) => {
+            let id = lower(inner, vars, b)?;
+            b.push(Op::Sinh(id))
+        }
+        Expr::Cosh(inner) => {
+            let id = lower(inner, vars, b)?;
+            b.push(Op::Cosh(id))
+        }
+        Expr::Func { name, .. } => return Err(JitError::IndeterminateFunction(name.clone())),
     })
 }
 
@@ -134,5 +147,15 @@ mod tests {
     fn unlisted_variable_is_an_error() {
         let err = compile(&Expr::var("y"), &vars(&["x"])).unwrap_err();
         assert_eq!(err, JitError::UnknownVariable("y".to_string()));
+    }
+
+    /// Marco 6 step 4 (indeterminate functions): a `Func` node has no
+    /// known numeric value, so compiling it must fail cleanly, never
+    /// panic and never silently produce a wrong number.
+    #[test]
+    fn an_indeterminate_function_is_a_clean_compile_error() {
+        let f_of_r = Expr::func("f", vec![Expr::var("r")]);
+        let err = compile(&f_of_r, &vars(&["r"])).unwrap_err();
+        assert_eq!(err, JitError::IndeterminateFunction("f".to_string()));
     }
 }

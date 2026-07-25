@@ -9,6 +9,15 @@ description = "ODEROM Marco 2 -- symbolic scalar expressions: differentiation an
 oderom-core = { path = "../oderom-core" }
 thiserror = "1"
 smallvec = "1"
+rustc-hash = "1"
+# Exception to the minimal-dependency policy (explicitly authorized):
+# Expr::Rational needs arbitrary-precision rationals -- i64 coefficients
+# overflow (silently, in release builds without overflow-checks) under
+# naive polynomial-GCD coefficient growth, see DESIGN-RATIONAL-FORM.md.
+# Both are pure Rust, no C/GMP dependency, for portability.
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
 
 [dev-dependencies]
 proptest = "1"

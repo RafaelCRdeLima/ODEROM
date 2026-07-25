@@ -1,0 +1,14 @@
+# Regression fixture: `tan(theta)` used where a real trigonometric
+# tangent was clearly intended. Before RESERVED_FN_NAMES existed, this
+# metric would have been silently ACCEPTED -- `tan` parsing as an
+# opaque indeterminate function -- and any query differentiating it
+# would have produced a plausible-looking but wrong answer (an ordinary
+# indeterminate `tan'`, never the real sec^2). Must be a clean parse
+# error instead, naming the reservation, never a computed result.
+manifold M dim 2
+bundle TM on M dim 2
+chart c on M coords (r, theta)
+metric g on c bundle TM {
+  [r,r] = 1,
+  [theta,theta] = tan(theta)^2
+}

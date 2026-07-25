@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ODEROM",
+  "version": "0.1.0",
+  "identifier": "com.oderom.notebook",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Education",
+    "shortDescription": "Symbolic differential geometry notebook for general relativity",
+    "longDescription": "ODEROM computes Christoffel symbols, curvature tensors and scalars, and geodesic equations symbolically from a metric or connection, in a Jupyter-style notebook.",
+    "license": "MIT OR Apache-2.0",
+    "icon": [
+      "icons/icon-32.png",
+      "icons/icon-128.png",
+      "icons/icon-256.png",
+      "icons/icon-512.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}

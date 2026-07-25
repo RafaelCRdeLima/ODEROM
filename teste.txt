@@ -1,0 +1,8 @@
+chart schw (t, r, theta, phi)
+
+metric g on schw {
+  g_{tt}          = -(1 - 2*M/r + Q^2/r^2)
+  g_{rr}          = 1/(1 - 2*M/r + Q^2/r^2)
+  g_{thetatheta}  = r^2
+  g_{phiphi}      = r^2 * sin(theta)^2
+}

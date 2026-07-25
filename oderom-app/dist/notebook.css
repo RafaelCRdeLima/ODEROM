@@ -1,0 +1,735 @@
+/* ODEROM notebook -- Etapa 3a-2/redesign. Deliberate choices, not
+   defaults (see the session log for the reasoning behind each):
+   - a numbered gutter ([n] / [ ]) makes "nada recalcula sozinho"
+     visible without effort -- an unexecuted block is impossible to
+     mistake for an executed one.
+   - the focused block gets a ring, never a background fill (a filled
+     background fights the code's own syntax-highlight colors).
+   - output has no card/border -- it sits loose below the block, in a
+     serif font, the way a result sits below a calculation on paper.
+   - no per-block "run" button and no toolbar "new block" button --
+     Ctrl/Shift/Alt-Enter and the trailing empty block cover every way
+     to create or run one, entirely from the keyboard, on purpose (a
+     mouse-oriented button competes with the keyboard for exactly the
+     gesture a notebook wants to encourage). A block can still be
+     deleted with the mouse (there is no keyboard-only equivalent yet).
+   - no background color per block kind -- would just become noise as
+     the notebook grows.
+*/
+
+:root {
+  --ink: #1b1b23;
+  --ink-soft: #6b6b78;
+  --accent: #1D9E75;
+  --focus-ring: #3b82f6;
+  --border: #e4e4ea;
+  --bg: #f7f7fa;
+  /* the header is a dark surface, everything else is light -- it's the
+     one place mark-on-dark.svg's white/light-green strokes are legible,
+     and matching --ink itself (rather than a separate near-black) keeps
+     it visually tied to the same "ink" the rest of the page's text
+     uses. */
+  --header-bg: var(--ink);
+  --header-text: #f0f0f5;
+  --header-text-soft: #a3a3b0;
+  --header-line: rgba(255, 255, 255, 0.14);
+  --header-control-bg: rgba(255, 255, 255, 0.08);
+  --header-control-bg-hover: rgba(255, 255, 255, 0.16);
+  /* Etapa 3b: amber, never red -- red already means "parse error" on
+     this page, and an obsolete result is valid information from an
+     earlier state, not a mistake. */
+  --obsolete: #9a6a00;
+  --obsolete-stripe: #d9a300;
+  /* Etapa 3b, cancelamento: a third and fourth state, each with its own
+     color -- teal for "computing right now" (deliberately not the same
+     blue as the focus ring, so a running-and-focused block doesn't read
+     as just "focused"), neutral slate for "cancelled" (a stop the user
+     asked for, not a mistake -- not red, not amber). */
+  --running: #0e7490;
+  --cancelled: #64748b;
+  /* Etapa 3b, segunda parte (exclusão mútua): a fifth, distinct color --
+     never red (already "parse error") or amber (already "obsolete") --
+     for the one moment that needs to READ as an event, not a state: a
+     refused keypress. See .refusal-flash/.refused-flash below for why a
+     color alone (persistent, like every other state above) is not
+     enough here. */
+  --refuse: #c2410c;
+  /* "Novo caderno" (the one destructive toolbar action): a color used
+     nowhere else in the header, deliberately -- neither --refuse (a
+     transient event flash, not a standing button) nor any of the
+     block-state colors above, none of which mean "this button destroys
+     work" on their own. */
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.14);
+  --danger-bg-hover: rgba(220, 38, 38, 0.24);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------------------------------------------------------------- */
+/* Header                                                            */
+/* ---------------------------------------------------------------- */
+
+#app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-line);
+  flex-shrink: 0;
+}
+
+#app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+#app-logo {
+  height: 26px;
+  width: 26px;
+  flex-shrink: 0;
+}
+
+#doc-name {
+  font-size: 0.95rem;
+  color: var(--header-text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#app-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#path-input {
+  padding: 0.35rem 0.6rem;
+  border-radius: 5px;
+  border: 1px solid var(--header-line);
+  min-width: 16rem;
+  font-size: 0.85rem;
+  background: var(--header-control-bg);
+  color: var(--header-text);
+}
+
+#path-input::placeholder {
+  color: var(--header-text-soft);
+}
+
+#app-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  border: 1px solid var(--header-line);
+  border-radius: 5px;
+  padding: 0.35rem 0.65rem;
+  background: var(--header-control-bg);
+  color: var(--header-text);
+  font-size: 0.85rem;
+}
+
+#app-actions button:hover {
+  background: var(--header-control-bg-hover);
+}
+
+/* A visual gap, not just spacing, between the frequent actions
+   (Abrir/Salvar/Galeria) and the two notebook-state-reset controls --
+   "não adjacente a uma ação frequente": nobody reaching for Salvar
+   should have Novo caderno right next to their cursor. */
+#app-actions-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--header-line);
+  margin: 0 0.15rem;
+}
+
+/* "Limpar execução" (reversible -- just re-execute) stays the same
+   neutral style every other toolbar button already uses. "Novo caderno"
+   (destructive -- text is genuinely gone) is the one button in this
+   header styled as a warning, on purpose: distinct enough that the two
+   new controls can never be confused with each other at a glance,
+   exactly the "visualmente distintos" requirement. */
+#app-actions button.danger {
+  border-color: rgba(220, 38, 38, 0.5);
+  background: var(--danger-bg);
+  color: #fca5a5;
+}
+
+#app-actions button.danger:hover {
+  background: var(--danger-bg-hover);
+  color: #fecaca;
+}
+
+/* ---------------------------------------------------------------- */
+/* "Novo caderno" confirmation -- same non-modal panel convention as    */
+/* the gallery picker below (no backdrop, no focus trap, closes via     */
+/* Escape/click-outside/its own Cancelar button); ONLY the explicit     */
+/* "Apagar tudo" button ever actually confirms.                         */
+/* ---------------------------------------------------------------- */
+
+#new-notebook-confirm-panel {
+  position: absolute;
+  top: 3.4rem;
+  right: 1rem;
+  z-index: 10;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+  background: #fff;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 0.9rem 1rem;
+}
+
+#new-notebook-confirm-panel[hidden] {
+  display: none;
+}
+
+#new-notebook-confirm-panel p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+#new-notebook-confirm-file-note {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+#new-notebook-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+#new-notebook-confirm-actions button {
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+}
+
+#new-notebook-confirm-actions button.danger {
+  border: none;
+  background: var(--danger);
+  color: #fff;
+}
+
+#new-notebook-confirm-actions button.danger:hover {
+  background: #b91c1c;
+}
+
+#new-notebook-confirm-actions button:not(.danger):hover {
+  background: var(--bg);
+}
+
+/* ---------------------------------------------------------------- */
+/* Gallery picker (Rodada Galeria) -- a plain panel, not a modal: no    */
+/* backdrop, no focus trap, closes via its own button or Escape.        */
+/* ---------------------------------------------------------------- */
+
+#gallery-panel {
+  position: absolute;
+  top: 3.4rem;
+  right: 1rem;
+  z-index: 10;
+  width: 26rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+#gallery-panel[hidden] {
+  display: none;
+}
+
+#gallery-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+#gallery-close-btn {
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+#gallery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem;
+}
+
+.gallery-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.gallery-entry:hover,
+.gallery-entry:focus-visible {
+  background: var(--bg);
+}
+
+.gallery-entry-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.gallery-entry-description,
+.gallery-entry-invariant {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  margin-top: 0.1rem;
+}
+
+/* ---------------------------------------------------------------- */
+/* Blocks                                                             */
+/* ---------------------------------------------------------------- */
+
+#blocks {
+  flex: 1;
+  overflow-y: auto;
+  max-width: 52rem;
+  margin: 0 auto;
+  width: 100%;
+  padding: 1.4rem 1rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.block {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  position: relative;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  padding: 0.4rem 0.5rem;
+  /* box-sizing: border-box (set globally, * selector above) means this
+     border/padding never shifts layout when .focused toggles it on --
+     transparent and colored borders occupy the same box either way. */
+}
+
+.block.focused {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* Etapa 3b, "obsolescência visível" -- purely informational, never a
+   reason to hide or recompute anything (see notebook.js's own comment
+   at the top). Two signals, deliberately not just color, so it reads
+   without relying on color perception at all:
+     1. a stripe on the block's own left edge (shape + position, not
+        just a color swap on existing text) via ::before below.
+     2. a small arrow glyph next to the gutter number, via
+        .block-gutter::after -- a colorblind reader sees an extra mark
+        appear, not just a hue change on "[4]".
+   A third, textual signal ("resultado obsoleto") is added directly in
+   renderOutput (notebook.js) wherever there's an actual result to
+   label -- the strongest signal of all, since it doesn't depend on any
+   visual channel. */
+.block.obsolete {
+  position: relative;
+}
+
+.block.obsolete::before {
+  content: "";
+  position: absolute;
+  left: -0.55rem;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--obsolete-stripe);
+}
+
+/* Etapa 3b, cancelamento -- "running"/"cancelled" get the exact same
+   two-signal treatment as "obsolete" above (stripe + gutter glyph,
+   never color alone), on purpose: consistent visual grammar, distinct
+   colors. A block never carries the generic .obsolete class at the
+   same time as .running/.cancelled (notebook.js suppresses it there
+   deliberately -- Attempt-state blocks get their own complete
+   treatment instead of a second, conflicting stripe layered on top). */
+.block.running,
+.block.cancelled {
+  position: relative;
+}
+
+.block.running::before {
+  content: "";
+  position: absolute;
+  left: -0.55rem;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--running);
+}
+
+.block.cancelled::before {
+  content: "";
+  position: absolute;
+  left: -0.55rem;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--cancelled);
+}
+
+.block.running .block-gutter {
+  color: var(--running);
+}
+
+.block.running .block-gutter::after {
+  content: " \25cc"; /* dotted circle -- a shape, not just a color, for "in progress" */
+  font-size: 0.75em;
+}
+
+.block.cancelled .block-gutter {
+  color: var(--cancelled);
+}
+
+.block.cancelled .block-gutter::after {
+  content: " \2298"; /* circled slash -- a shape for "stopped" */
+  font-size: 0.75em;
+}
+
+.running-label,
+.cancelled-label {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.3rem;
+}
+
+.running-label {
+  color: var(--running);
+}
+
+.cancelled-label {
+  color: var(--cancelled);
+}
+
+.block-cancel {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--running);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--running);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.block-cancel:hover {
+  background: var(--running);
+  color: #fff;
+}
+
+.block-gutter {
+  flex-shrink: 0;
+  width: 2.6rem;
+  padding-top: 0.55rem;
+  text-align: right;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  user-select: none;
+}
+
+.block.obsolete .block-gutter {
+  color: var(--obsolete);
+}
+
+.block.obsolete .block-gutter::after {
+  content: " \21bb"; /* clockwise open circle arrow -- a shape, not a color */
+  font-size: 0.75em;
+}
+
+.block-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.block-delete {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.block:hover .block-delete {
+  opacity: 1;
+}
+
+.block-delete:hover {
+  background: #fbe4e4;
+  color: #a12020;
+}
+
+.block-editor {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.block.focused .block-editor {
+  border-color: transparent; /* the ring on .block already marks focus */
+}
+
+.block-editor .CodeMirror {
+  height: auto;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.6rem;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92rem;
+}
+
+/* The trailing empty block -- always present, never a "real" block
+   until typed into (DESIGN-NOTEBOOK.md still applies: it already IS a
+   real block in the data model, created by the last Shift/Alt-Enter or
+   at notebook creation -- this is styling only, for the one that
+   happens to be both last and empty). */
+.block.trailing-empty .block-editor {
+  border-style: dashed;
+  background: transparent;
+}
+
+.block.trailing-empty .block-gutter {
+  color: #c7c7d1;
+}
+
+.block-placeholder {
+  position: absolute;
+  padding: 0.4rem 0.6rem;
+  color: #a8a8b4;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92rem;
+  pointer-events: none;
+}
+
+.block-output {
+  padding: 0.5rem 0.1rem 0.1rem;
+}
+
+.block-output:empty {
+  display: none;
+}
+
+.latex-line {
+  padding: 0.2rem 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+}
+
+/* One clickable, copyable component (oderom_components::RenderedComponent
+   -> ComponentDto): the KaTeX-rendered formula plus, when present, its
+   subordinate orbit-size note -- never glued into one string, see
+   src-tauri/src/lib.rs's ComponentDto doc comment for why. Clicking
+   anywhere in the row copies that component's own clean LaTeX, never
+   the orbit note and never the whole block's output. */
+.component-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.15rem 0.3rem;
+  margin: 0.05rem -0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.component-row:hover {
+  background: rgba(27, 27, 35, 0.045);
+}
+
+.component-row .latex-line {
+  padding: 0;
+  flex: 0 1 auto;
+}
+
+/* Deliberately plain text, never KaTeX -- see notebook.js's
+   renderComponents doc comment: this is the exact fact problem 1's
+   own bug report was about (an English parenthetical run through KaTeX
+   comes out italic and unspaced). Visually subordinate to the formula
+   next to it -- smaller, muted, never mistaken for part of the math. */
+.component-note {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* A brief, non-modal confirmation that a click's copy actually
+   happened (the user's own requirement: "sem diálogo modal") --
+   toggled on to flash, then removed a moment later by notebook.js.
+   Positioned as its own small badge rather than altering the row's own
+   background, so it reads as feedback about the click, not as a
+   changed state of the result itself. */
+.copied-flash {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.68rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Result-wide plain text (truncation count, identically-zero count) --
+   belongs to no single component, so it is never part of any
+   component's own copyable text. */
+.result-summary-line {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  padding: 0.15rem 0.3rem;
+}
+
+.error-text {
+  color: #a12020;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+/* The third, purely-textual obsolescence signal -- see the .block.obsolete
+   comment above. Sits above the (otherwise untouched, still fully
+   legible) old result, never instead of it. */
+.obsolete-label {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 0.72rem;
+  color: var(--obsolete);
+  letter-spacing: 0.02em;
+  margin-bottom: 0.3rem;
+}
+
+/* ---------------------------------------------------------------- */
+/* Status bar                                                        */
+/* ---------------------------------------------------------------- */
+
+#status-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 1rem;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+#status-left::before {
+  content: "\25CF";
+  color: var(--accent);
+  margin-right: 0.4rem;
+}
+
+/* Etapa 3b, segunda parte (exclusão mútua, DESIGN-NOTEBOOK.md section
+   10.8): the busy message in #status-left is AMBIENT -- it was already
+   on screen before a refused key was pressed, and stays exactly the
+   same after, so by itself it proves nothing happened in response to
+   THAT keypress (indistinguishable, from the user's seat, from the key
+   doing nothing at all -- the same complaint that motivated this whole
+   feature). This is the actual event: a brief halo, retriggered
+   (notebook.js's `restartFlash`) on every single refusal even if the
+   previous one hasn't finished fading, so a real person watching the
+   screen sees something happen at the exact moment they pressed the
+   key, on top of (never instead of) the ambient message. box-shadow,
+   not background/border, so it never shifts layout. */
+@keyframes refusal-flash {
+  0% { box-shadow: 0 0 0 4px rgba(194, 65, 12, 0.4); }
+  100% { box-shadow: 0 0 0 4px rgba(194, 65, 12, 0); }
+}
+
+#status-left.refusal-flash {
+  border-radius: 4px;
+  animation: refusal-flash 700ms ease-out;
+}
+
+/* The other half of the same event: a brief halo on the block that is
+   actually occupying execution -- the "who" to the status bar's
+   "something got refused", found for free by reusing the same `by`
+   block id the backend already returns. */
+@keyframes refusal-flash-block {
+  0% { box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.5); }
+  100% { box-shadow: 0 0 0 3px rgba(194, 65, 12, 0); }
+}
+
+.block.refused-flash {
+  animation: refusal-flash-block 700ms ease-out;
+}
+
+/* ---------------------------------------------------------------- */
+/* CodeMirror mode token colors                                      */
+/* ---------------------------------------------------------------- */
+
+.cm-keyword { color: #7a3e9d; font-weight: 600; }
+.cm-atom { color: #0b6fa4; }
+.cm-number { color: #b5860b; }
+.cm-comment { color: #888; font-style: italic; }
+.cm-operator { color: #444; }

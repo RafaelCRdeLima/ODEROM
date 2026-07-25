@@ -1,0 +1,15 @@
+# Same geometry as reissner_nordstrom.od, with f(r) named once via an
+# alias instead of repeated in both diagonal components. Golden test for
+# the alias feature (DESIGN-NOTEBOOK.md alias section): kretschmann here
+# must match reissner_nordstrom.od's own output byte for byte.
+f := 1 - 2*M/r + Q^2/r^2
+
+manifold M dim 4
+bundle TM on M dim 4
+chart schw on M coords (t, r, theta, phi)
+metric g on schw bundle TM {
+  [t,t] = -f,
+  [r,r] = 1/f,
+  [theta,theta] = r^2,
+  [phi,phi] = r^2 * sin(theta)^2
+}

@@ -1,11 +1,6 @@
-mod commands;
-mod error;
-mod expr_parser;
-mod index_resolve;
-mod model;
-mod parser;
-
-use error::CliError;
+use oderom_cli::commands;
+use oderom_cli::error::CliError;
+use oderom_cli::parser;
 use std::time::Instant;
 
 fn main() {
@@ -25,8 +20,52 @@ fn run() -> Result<(), CliError> {
         "ricci" => commands::ricci_cmd(commands::parse_args(args)?),
         "scalar" => commands::scalar_cmd(commands::parse_args(args)?),
         "kretschmann" => commands::kretschmann_cmd(commands::parse_args(args)?),
+        "einstein" => commands::einstein_cmd(commands::parse_args(args)?),
+        "riccisquare" => commands::riccisquare_cmd(commands::parse_args(args)?),
+        "gaussbonnet" => commands::gaussbonnet_cmd(commands::parse_args(args)?),
+        "weyl" => commands::weyl_cmd(commands::parse_args(args)?),
+        "weylsquare" => commands::weylsquare_cmd(commands::parse_args(args)?),
+        "geodesic" => commands::geodesic_cmd(commands::parse_args(args)?),
+        "accel" => commands::accel_cmd(commands::parse_args(args)?),
+        "export" => run_export(args),
+        "load" => run_gallery_load(args),
         _ => Err(CliError::Usage),
     }
+}
+
+/// `oderom export TARGET COMMAND FILE [flags]` (Rodada Exportação) --
+/// two mandatory positionals ahead of the ordinary `FILE [flags]` every
+/// other subcommand already takes, so this can't reuse `parse_args`
+/// directly the way every other arm above does: it peels `TARGET` and
+/// `COMMAND` off the front itself, then hands the rest to `parse_args`
+/// unchanged, exactly as if `oderom export mathematica kretschmann
+/// schw.od --metric g` had been `oderom kretschmann schw.od --metric
+/// g` with the target/command already known -- so every existing flag
+/// (`--metric`/`--connection`/`--param`/`--max-nodes`/...) and
+/// redirection (`> out.py`) composes unchanged.
+fn run_export(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let export_target = args.next().ok_or(CliError::Usage)?;
+    let command_word = args.next().ok_or(CliError::Usage)?;
+    commands::export_cmd(export_target, command_word, commands::parse_args(args)?)
+}
+
+/// `oderom load NAME` -- the CLI's own access to the spacetime gallery
+/// (Rodada Galeria), alongside the notebook's `load` (which pastes the
+/// same catalog's entries as editable blocks). Unlike every other
+/// subcommand, this one takes no `FILE`: it prints one gallery entry's
+/// declarations, as a single valid `.od` file's worth of text
+/// (`oderom_cli::gallery::render`), to stdout -- `oderom load
+/// desitter > desitter.od` then `oderom scalar desitter.od` composes
+/// with every other subcommand exactly the way a hand-written `.od`
+/// file would, since the output *is* one.
+fn run_gallery_load(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let name = args.next().ok_or(CliError::Usage)?;
+    if args.next().is_some() {
+        return Err(CliError::Usage);
+    }
+    let entry = oderom_cli::gallery::find(&name).ok_or(oderom_cli::gallery::UnknownGalleryEntry { name })?;
+    println!("{}", oderom_cli::gallery::render(entry));
+    Ok(())
 }
 
 fn run_canon(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
