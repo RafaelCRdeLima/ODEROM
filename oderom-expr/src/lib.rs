@@ -44,7 +44,7 @@ pub use cancel::{run_cancellable, Cancelled};
 pub use diff::diff;
 pub use free_vars::free_vars;
 pub use isolate_linear::isolate_linear;
-pub use localized::{normalize_localized, LocalizationContext};
+pub use localized::{normalize_localized, Checkpoint, LocalizationBudgetExceeded, LocalizationContext};
 pub use normalize::normalize;
 pub use rationalize::{denominator_degree, rationalize};
 pub use render::{latex_var, GREEK_LETTERS};

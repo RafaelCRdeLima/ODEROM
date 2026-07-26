@@ -94,6 +94,26 @@ pub enum ComponentError {
     #[error("componentes conflitantes na declaracao: [{first_indices:?}] = {first_value} e [{second_indices:?}] = {second_value} nao sao compativeis pela simetria declarada")]
     ConflictingComponent { first_indices: Vec<u8>, first_value: oderom_expr::Expr, second_indices: Vec<u8>, second_value: oderom_expr::Expr },
 
+    /// The localized rational-form engine (`oderom_expr::LocalizationContext`,
+    /// DESIGN-RATIONAL-FORM.md section 8) hit the caller's execution
+    /// budget (`Checkpoint`) exactly at the one point it can leave the
+    /// localized representation for the general engine
+    /// (`oderom_expr::localized`'s own single, unified fallback
+    /// boundary -- never one of several call sites someone would have
+    /// to remember to check). Deliberately errs with the whole
+    /// computation, never a partial result (section 2.6's "reduzido ou
+    /// não, nunca errado" extended: partial-and-timed-out is not a
+    /// value this engine is willing to hand back). The message names
+    /// exactly what a user needs to decide whether the escaped
+    /// denominator should become a new generator: which tensor
+    /// component was being computed (a concept `oderom-expr` itself has
+    /// no notion of, hence added here rather than on
+    /// `oderom_expr::LocalizationBudgetExceeded` directly), the
+    /// denominator expression that did not belong to the known
+    /// generator set, and every generator known at that moment.
+    #[error("orcamento de execucao esgotado calculando {component}: o denominador `{denominator}` saiu do conjunto de geradores localizados [{generators_rendered}] e o motor geral nao terminou dentro do orcamento -- considere admitir esse fator como gerador ou aumentar o orcamento")]
+    LocalizationFallbackBudgetExceeded { component: String, denominator: oderom_expr::Expr, generators_rendered: String },
+
     // No variant for "the equation is not affine-linear in its own second
     // derivative": that is not a property of the metric/chart the way a
     // vanishing coefficient is -- it is a mathematical fact about what a

@@ -111,7 +111,7 @@ fn kerr_christoffel_satisfies_metric_compatibility() {
                         sum = sum - gamma_lambda_mu_rho * g.get(&model.registry, &[nu, lambda]).unwrap();
                     }
                 }
-                let reduced = normalize_localized(&sum, &mut ctx);
+                let reduced = normalize_localized(&sum, &mut ctx, &mut || false).unwrap();
                 assert!(reduced.is_zero(), "nabla_{mu} g_{{{nu}{rho}}} = {reduced}, expected 0 (metric compatibility)");
             }
         }
@@ -151,9 +151,9 @@ fn kretschmann_of_kerr_from_od_file_matches_closed_form() {
     let seeds = localization_generators(&model.registry, chart, g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
     let gamma = christoffel_localized(&model.registry, chart, g, &ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(chart, &gamma, &mut ctx);
+    let riem_mixed = riemann_mixed_localized(chart, &gamma, &mut ctx).unwrap();
     let riem_cov = lower_first_index_localized(&model.registry, chart, &riem_mixed, g, &mut ctx).unwrap();
-    let k = kretschmann_localized(chart, &riem_cov, &ginv, &mut ctx);
+    let k = kretschmann_localized(chart, &riem_cov, &ginv, &mut ctx).unwrap();
 
     // K = 48*M^2*(r^2-a^2*cos(theta)^2)*((r^2+a^2*cos(theta)^2)^2 -
     // 16*r^2*a^2*cos(theta)^2) / (r^2+a^2*cos(theta)^2)^6 -- the closed

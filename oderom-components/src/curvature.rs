@@ -483,21 +483,60 @@ pub fn localization_generators(registry: &Registry, chart: &Chart, g: &Component
     Ok(generators)
 }
 
-/// Same as [`christoffel_checkpointed`], but reduces every component
-/// against `ctx`'s localization generators (DESIGN-RATIONAL-FORM.md
-/// section 8) instead of relying solely on the general recursive
-/// multivariate GCD `normalize()` calls into -- the fix for a
-/// denominator with no single pole variable (Kerr's `Sigma`, section
-/// 7.1). `ctx` should be seeded via [`localization_generators`] and
-/// shared with every later stage of the same metric's computation
-/// (`riemann_mixed_localized`, `ricci_tensor_localized`) so a generator
-/// discovered in one stage is recognized in the next.
+/// Names the tensor component being computed when
+/// `oderom_expr::LocalizationBudgetExceeded` fires, and joins its
+/// generator list into the rendered form
+/// `ComponentError::LocalizationFallbackBudgetExceeded` displays --
+/// the one place that conversion happens, so every `*_localized_checkpointed`
+/// stage below reports the same shape of message.
+fn budget_exceeded_error(component: impl Into<String>, e: oderom_expr::LocalizationBudgetExceeded) -> ComponentError {
+    ComponentError::LocalizationFallbackBudgetExceeded {
+        component: component.into(),
+        denominator: e.denominator,
+        generators_rendered: e.generators.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", "),
+    }
+}
+
+/// Same as [`christoffel`], but reduces every component against `ctx`'s
+/// localization generators (DESIGN-RATIONAL-FORM.md section 8) instead
+/// of relying solely on the general recursive multivariate GCD
+/// `normalize()` calls into -- the fix for a denominator with no single
+/// pole variable (Kerr's `Sigma`, section 7.1). `ctx` should be seeded
+/// via [`localization_generators`] and shared with every later stage of
+/// the same metric's computation (`riemann_mixed_localized`,
+/// `ricci_tensor_localized`) so a generator discovered in one stage is
+/// recognized in the next.
 pub fn christoffel_localized(registry: &Registry, chart: &Chart, g: &ComponentTensor, ginv: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    christoffel_localized_checkpointed(registry, chart, g, ginv, ctx, &mut || false)
+}
+
+/// Same as [`christoffel_localized`], but calls `checkpoint` once per
+/// independent `(a,b,c)` component (coarse -- matching
+/// [`christoffel_checkpointed`]'s own granularity, DESIGN-RATIONAL-FORM.md
+/// section 8's "checkpoint per component in the outer loop is enough,
+/// don't instrument Poly's own arithmetic") *and* once more, mandatorily,
+/// at the one point a component's computation can leave the localized
+/// representation for the general engine
+/// (`oderom_expr::localized`'s single, unified fallback boundary) --
+/// that second check is where the historically non-terminating case
+/// actually lives (section 7.1), so it is never skipped regardless of
+/// how coarse the outer loop's own checking is.
+pub fn christoffel_localized_checkpointed(
+    registry: &Registry,
+    chart: &Chart,
+    g: &ComponentTensor,
+    ginv: &Grid,
+    ctx: &mut LocalizationContext,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut gamma = Grid::new(n, 3);
     for a in 0..n as u8 {
         for b in 0..n as u8 {
             for c in 0..n as u8 {
+                if checkpoint() {
+                    return Err(ComponentError::Cancelled);
+                }
                 let mut sum = Expr::zero();
                 for d in 0..n as u8 {
                     let ad = ginv.get(&[a, d]);
@@ -509,7 +548,9 @@ pub fn christoffel_localized(registry: &Registry, chart: &Chart, g: &ComponentTe
                         + Expr::int(-1) * diff(&g.get(registry, &[b, c])?, chart.coord(d));
                     sum = sum + ad * term;
                 }
-                gamma.set(&[a, b, c], normalize_localized(&(Expr::rational(1, 2) * sum), ctx));
+                let reduced = normalize_localized(&(Expr::rational(1, 2) * sum), ctx, checkpoint)
+                    .map_err(|e| budget_exceeded_error(format!("Gamma^{a}_{{{b}{c}}}"), e))?;
+                gamma.set(&[a, b, c], reduced);
             }
         }
     }
@@ -743,32 +784,62 @@ pub fn riemann_mixed_checkpointed(chart: &Chart, gamma: &Grid, checkpoint: Check
 /// generators (see [`christoffel_localized`]) instead of the general
 /// engine. This is the stage section 7.1 measured never terminating
 /// within a 180s budget for Kerr under the general engine.
-pub fn riemann_mixed_localized(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext) -> Grid {
+pub fn riemann_mixed_localized(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    riemann_mixed_localized_checkpointed(chart, gamma, ctx, &mut || false)
+}
+
+/// Same as [`riemann_mixed_localized`], checkpointed per independent
+/// `(a,b,c,d)` component, plus the mandatory check at the fallback
+/// boundary -- see [`christoffel_localized_checkpointed`]'s own doc
+/// comment for why both exist and neither substitutes for the other.
+pub fn riemann_mixed_localized_checkpointed(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut riem = Grid::new(n, 4);
     for a in 0..n as u8 {
         for b in 0..n as u8 {
             for c in 0..n as u8 {
                 for d in 0..n as u8 {
+                    if checkpoint() {
+                        return Err(ComponentError::Cancelled);
+                    }
                     let mut val = diff(&gamma.get(&[a, b, d]), chart.coord(c)) + Expr::int(-1) * diff(&gamma.get(&[a, b, c]), chart.coord(d));
                     for e in 0..n as u8 {
                         val = val + gamma.get(&[a, c, e]) * gamma.get(&[e, b, d]) + Expr::int(-1) * gamma.get(&[a, d, e]) * gamma.get(&[e, b, c]);
                     }
-                    riem.set(&[a, b, c, d], normalize_localized(&val, ctx));
+                    let reduced = normalize_localized(&val, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("R^{a}_{{{b}{c}{d}}}"), e))?;
+                    riem.set(&[a, b, c, d], reduced);
                 }
             }
         }
     }
-    riem
+    Ok(riem)
 }
 
 /// Same as [`lower_index`], but reduces via `ctx`'s localization
 /// generators (see [`christoffel_localized`]).
 pub fn lower_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g: &ComponentTensor, position: usize, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    lower_index_localized_checkpointed(registry, chart, grid, g, position, ctx, &mut || false)
+}
+
+/// Same as [`lower_index_localized`], checkpointed per raw index tuple,
+/// plus the mandatory check at the fallback boundary -- see
+/// [`christoffel_localized_checkpointed`]'s own doc comment.
+pub fn lower_index_localized_checkpointed(
+    registry: &Registry,
+    chart: &Chart,
+    grid: &Grid,
+    g: &ComponentTensor,
+    position: usize,
+    ctx: &mut LocalizationContext,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let rank = grid.rank();
     let mut out = Grid::new(n, rank);
     for_each_index_tuple(n, rank, |idx| {
+        if checkpoint() {
+            return Err(ComponentError::Cancelled);
+        }
         let target = idx[position];
         let mut sum = Expr::zero();
         for a in 0..n as u8 {
@@ -780,7 +851,8 @@ pub fn lower_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g:
             src[position] = a;
             sum = sum + g_ea * grid.get(&src);
         }
-        out.set(idx, normalize_localized(&sum, ctx));
+        let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("indice {idx:?} (abaixando posicao {position})"), e))?;
+        out.set(idx, reduced);
         Ok(())
     })?;
     Ok(out)
@@ -792,13 +864,43 @@ pub fn lower_first_index_localized(registry: &Registry, chart: &Chart, grid: &Gr
     lower_index_localized(registry, chart, grid, g, 0, ctx)
 }
 
+/// Same as [`lower_first_index_localized`], checkpointed -- see
+/// [`lower_index_localized_checkpointed`].
+pub fn lower_first_index_localized_checkpointed(
+    registry: &Registry,
+    chart: &Chart,
+    grid: &Grid,
+    g: &ComponentTensor,
+    ctx: &mut LocalizationContext,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
+    lower_index_localized_checkpointed(registry, chart, grid, g, 0, ctx, checkpoint)
+}
+
 /// Same as [`raise_index`], but reduces via `ctx`'s localization
 /// generators (see [`christoffel_localized`]).
-pub fn raise_index_localized(chart: &Chart, grid: &Grid, ginv: &Grid, position: usize, ctx: &mut LocalizationContext) -> Grid {
+pub fn raise_index_localized(chart: &Chart, grid: &Grid, ginv: &Grid, position: usize, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    raise_index_localized_checkpointed(chart, grid, ginv, position, ctx, &mut || false)
+}
+
+/// Same as [`raise_index_localized`], checkpointed per raw index tuple,
+/// plus the mandatory check at the fallback boundary -- see
+/// [`christoffel_localized_checkpointed`]'s own doc comment.
+pub fn raise_index_localized_checkpointed(
+    chart: &Chart,
+    grid: &Grid,
+    ginv: &Grid,
+    position: usize,
+    ctx: &mut LocalizationContext,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let rank = grid.rank();
     let mut out = Grid::new(n, rank);
     for_each_index_tuple(n, rank, |idx| {
+        if checkpoint() {
+            return Err(ComponentError::Cancelled);
+        }
         let target = idx[position];
         let mut sum = Expr::zero();
         for a in 0..n as u8 {
@@ -810,31 +912,42 @@ pub fn raise_index_localized(chart: &Chart, grid: &Grid, ginv: &Grid, position: 
             src[position] = a;
             sum = sum + coeff * grid.get(&src);
         }
-        out.set(idx, normalize_localized(&sum, ctx));
+        let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("indice {idx:?} (subindo posicao {position})"), e))?;
+        out.set(idx, reduced);
         Ok(())
-    })
-    .expect("closure above never returns Err");
-    out
+    })?;
+    Ok(out)
 }
 
 /// Same as [`kretschmann`], but reduces via `ctx`'s localization
 /// generators (see [`christoffel_localized`]) -- the fix for
 /// DESIGN-RATIONAL-FORM.md section 7.1.
-pub fn kretschmann_localized(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext) -> Expr {
-    let raised0 = raise_index_localized(chart, riemann_cov, ginv, 0, ctx);
-    let raised1 = raise_index_localized(chart, &raised0, ginv, 1, ctx);
-    let raised2 = raise_index_localized(chart, &raised1, ginv, 2, ctx);
-    let riemann_contra = raise_index_localized(chart, &raised2, ginv, 3, ctx);
+pub fn kretschmann_localized(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext) -> Result<Expr, ComponentError> {
+    kretschmann_localized_checkpointed(chart, riemann_cov, ginv, ctx, &mut || false)
+}
+
+/// Same as [`kretschmann_localized`], checkpointed through the four
+/// [`raise_index_localized_checkpointed`] calls and once per summed
+/// term, plus the mandatory check at the final `normalize_localized`'s
+/// own fallback boundary -- see [`christoffel_localized_checkpointed`]'s
+/// own doc comment.
+pub fn kretschmann_localized_checkpointed(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+    let raised0 = raise_index_localized_checkpointed(chart, riemann_cov, ginv, 0, ctx, checkpoint)?;
+    let raised1 = raise_index_localized_checkpointed(chart, &raised0, ginv, 1, ctx, checkpoint)?;
+    let raised2 = raise_index_localized_checkpointed(chart, &raised1, ginv, 2, ctx, checkpoint)?;
+    let riemann_contra = raise_index_localized_checkpointed(chart, &raised2, ginv, 3, ctx, checkpoint)?;
 
     let n = chart.dim();
     let mut sum = Expr::zero();
     for_each_index_tuple(n, 4, |idx| {
+        if checkpoint() {
+            return Err(ComponentError::Cancelled);
+        }
         let term = riemann_cov.get(idx) * riemann_contra.get(idx);
         sum = std::mem::replace(&mut sum, Expr::zero()) + term;
         Ok(())
-    })
-    .expect("closure above never returns Err");
-    normalize_localized(&sum, ctx)
+    })?;
+    normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error("Kretschmann", e))
 }
 
 /// Lowers a `Grid`'s first index through `g`: `T_{e...} = g_{ea} T^a_{...}`.
@@ -1056,19 +1169,30 @@ pub fn ricci_tensor_checkpointed(chart: &Chart, riemann_mixed: &Grid, checkpoint
 
 /// Same as [`ricci_tensor`], but reduces via `ctx`'s localization
 /// generators (see [`christoffel_localized`]).
-pub fn ricci_tensor_localized(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext) -> Grid {
+pub fn ricci_tensor_localized(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    ricci_tensor_localized_checkpointed(chart, riemann_mixed, ctx, &mut || false)
+}
+
+/// Same as [`ricci_tensor_localized`], checkpointed per independent
+/// `(b,d)` component, plus the mandatory check at the fallback boundary
+/// -- see [`christoffel_localized_checkpointed`]'s own doc comment.
+pub fn ricci_tensor_localized_checkpointed(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut ricci = Grid::new(n, 2);
     for b in 0..n as u8 {
         for d in 0..n as u8 {
+            if checkpoint() {
+                return Err(ComponentError::Cancelled);
+            }
             let mut sum = Expr::zero();
             for a in 0..n as u8 {
                 sum = sum + riemann_mixed.get(&[a, b, a, d]);
             }
-            ricci.set(&[b, d], normalize_localized(&sum, ctx));
+            let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("R_{{{b}{d}}}"), e))?;
+            ricci.set(&[b, d], reduced);
         }
     }
-    ricci
+    Ok(ricci)
 }
 
 /// `R = g^bd R_bd` (Ricci scalar).

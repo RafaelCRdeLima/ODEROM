@@ -120,9 +120,9 @@ fn kretschmann_localized_pipeline(m: &Metric) -> Result<(Expr, LocalizationConte
     let seeds = localization_generators(&m.registry, &m.chart, &m.g)?;
     let mut ctx = LocalizationContext::new(&seeds);
     let gamma = christoffel_localized(&m.registry, &m.chart, &m.g, &ginv, &mut ctx)?;
-    let riem_mixed = riemann_mixed_localized(&m.chart, &gamma, &mut ctx);
+    let riem_mixed = riemann_mixed_localized(&m.chart, &gamma, &mut ctx)?;
     let riem_cov = lower_first_index_localized(&m.registry, &m.chart, &riem_mixed, &m.g, &mut ctx)?;
-    let k = kretschmann_localized(&m.chart, &riem_cov, &ginv, &mut ctx);
+    let k = kretschmann_localized(&m.chart, &riem_cov, &ginv, &mut ctx)?;
     Ok((k, ctx))
 }
 
@@ -202,8 +202,8 @@ fn godel_ricci_tensor_agrees_between_engines() {
     let mut ctx = LocalizationContext::new(&seeds);
     let ginv_l = metric_inverse(&m.registry, &m.chart, &m.g).unwrap();
     let gamma_l = christoffel_localized(&m.registry, &m.chart, &m.g, &ginv_l, &mut ctx).unwrap();
-    let riem_l = riemann_mixed_localized(&m.chart, &gamma_l, &mut ctx);
-    let ricci_localized = ricci_tensor_localized(&m.chart, &riem_l, &mut ctx);
+    let riem_l = riemann_mixed_localized(&m.chart, &gamma_l, &mut ctx).unwrap();
+    let ricci_localized = ricci_tensor_localized(&m.chart, &riem_l, &mut ctx).unwrap();
 
     let vars: &[(&str, f64)] = &[("a", 1.3), ("x", 0.7)];
     for b in 0..m.chart.dim() as u8 {

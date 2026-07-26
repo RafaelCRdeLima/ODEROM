@@ -204,8 +204,8 @@ fn ricci_of_kerr_is_identically_zero_via_the_localized_engine() {
     let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
     let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
-    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx);
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
+    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx).unwrap();
     for b in 0..k.chart.dim() as u8 {
         for d in 0..k.chart.dim() as u8 {
             let component = ricci.get(&[b, d]);
@@ -247,9 +247,9 @@ fn kretschmann_of_kerr_matches_the_closed_form_via_the_localized_engine() {
     let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
     let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
     let riem_cov = lower_first_index_localized(&k.registry, &k.chart, &riem_mixed, &k.g, &mut ctx).unwrap();
-    let kretschmann = kretschmann_localized(&k.chart, &riem_cov, &k.ginv, &mut ctx);
+    let kretschmann = kretschmann_localized(&k.chart, &riem_cov, &k.ginv, &mut ctx).unwrap();
 
     let m = Expr::var("M");
     let a = Expr::var("a");
@@ -326,17 +326,72 @@ fn diagnostic_localized_engine_stage_timing() {
     flushed!("fallback_log after christoffel: {:?}", ctx.fallback_log());
 
     let t0 = Instant::now();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
     flushed!("riemann_mixed_localized: {:?}  (generators now: {})", t0.elapsed(), ctx.generator_count());
     flushed!("fallback_log after riemann_mixed: {:?}", ctx.fallback_log());
 
     let t0 = Instant::now();
-    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx);
+    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx).unwrap();
     flushed!("ricci_tensor_localized: {:?}", t0.elapsed());
 
     for b in 0..k.chart.dim() as u8 {
         for d in 0..k.chart.dim() as u8 {
             println!("R_{{{b}{d}}} = {}", ricci.get(&[b, d]));
         }
+    }
+}
+
+/// The execution-budget guardrail (DESIGN-RATIONAL-FORM.md section 8,
+/// Phase 1) actually firing through the real curvature pipeline, not
+/// just at the `oderom-expr` unit level
+/// (`oderom_expr::localized::tests::the_execution_budget_actually_fires_at_the_fallback_boundary`
+/// covers that precisely and deterministically already). A synthetic
+/// 2D metric, not Kerr itself: Kerr now falls back zero times (the
+/// whole point of this round's fixes), so it can't exercise this path
+/// any more -- this fixture's `g_00 = 1/(x-1)^3` is deliberately
+/// unresolvable by one repeated-factor extraction (same shape as
+/// `oderom-expr`'s own `(x-1)^3` test), seeded with no generators at
+/// all, so `christoffel_localized_checkpointed` is guaranteed to hit
+/// the general-engine fallback while computing `Gamma^0_00`.
+#[test]
+fn christoffel_localized_reports_the_escaped_denominator_when_the_budget_runs_out() {
+    let mut registry = Registry::new();
+    let manifold = registry.declare_manifold("M", 2).unwrap();
+    let tm = registry.declare_bundle("TM", manifold, 2).unwrap();
+    let co = SlotSig { bundle: tm, variance: Variance::Co, dim: 2 };
+    let metric_slots: SmallVec<[SlotSig; 4]> = smallvec::smallvec![co, co];
+    let metric_head = registry.declare_head("g", metric_slots, vec![SignedPerm::new(Perm::transposition(2, 0, 1), 1)]).unwrap();
+    let chart = Chart::new(["x", "y"]);
+    let x = Expr::var("x");
+    let cubed = (x.clone() - Expr::one()).pow(3);
+    let g_00 = normalize(&Expr::Pow(Box::new(cubed), -1));
+
+    let mut g = ComponentTensor::new(metric_head);
+    g.set(&registry, &[0, 0], g_00).unwrap();
+    g.set(&registry, &[1, 1], Expr::one()).unwrap();
+    let ginv = metric_inverse(&registry, &chart, &g).unwrap();
+
+    let mut ctx = LocalizationContext::new(&[]);
+    let mut calls = 0u32;
+    let mut checkpoint = move || {
+        calls += 1;
+        calls > 2
+    };
+    let err = oderom_components::curvature::christoffel_localized_checkpointed(&registry, &chart, &g, &ginv, &mut ctx, &mut checkpoint).expect_err("a (x-1)^3-shaped denominator must force the general-engine fallback, which the tripped checkpoint must then catch");
+
+    let message = err.to_string();
+    match &err {
+        ComponentError::LocalizationFallbackBudgetExceeded { component, denominator, generators_rendered } => {
+            assert!(component.contains("Gamma"), "expected the offending component named, got {component:?}");
+            let rendered_denominator = denominator.to_string();
+            assert!(rendered_denominator.contains('x'), "expected the escaped (x-1)-shaped denominator, got {rendered_denominator:?}");
+            assert!(generators_rendered.is_empty(), "no generator was ever seeded or admitted in this test, got {generators_rendered:?}");
+            // The Display message (what a user actually sees) must
+            // surface both pieces, not just carry them as unused struct
+            // fields never actually rendered.
+            assert!(message.contains(component.as_str()), "{message}");
+            assert!(message.contains(&rendered_denominator), "{message}");
+        }
+        other => panic!("expected LocalizationFallbackBudgetExceeded, got {other:?}"),
     }
 }

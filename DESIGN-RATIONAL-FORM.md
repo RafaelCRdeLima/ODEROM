@@ -801,3 +801,91 @@ coprimalidade, caindo no motor geral quando não passar (agnóstico à
 forma da métrica, nunca condicionado a "é diagonal?"/"é Kerr?") — gated
 por um teste diferencial contra o corpus que o motor geral já resolve
 (Schwarzschild, Reissner-Nordström, S², Gödel).
+
+## 8.6 Fase 1: orçamento de execução no caminho localizado (invariante arquitetural)
+
+Antes de o CLI poder rotear por padrão para o motor localizado, ele
+precisa herdar a mesma garantia de `--timeout`/`--max-nodes` que o motor
+geral já tem via `Checkpoint` (`oderom-components::curvature`). Sem
+isso, um fallback que não termina ficaria silenciosamente sem freio.
+
+**Invariante, não conserto pontual**: toda saída da representação
+localizada para o motor geral passa por exatamente **uma** função —
+`fallback_to_general_engine` (`oderom-expr/src/localized.rs`) — e só
+essa função chama `RationalFunction::from_raw`/`.pow()`. Antes desta
+fase havia dois pontos de saída (o ramo de `overflow` de `add()`, e o
+caso de fração aninhada em `reciprocal_pow()`); ambos foram unificados
+para chamar essa única função, que consulta o `Checkpoint` do chamador
+antes de prosseguir. A garantia não depende de alguém lembrar de
+checar em cada novo ponto de saída futuro — depende de nunca existir
+mais de um ponto de saída. Qualquer extensão futura deste motor que
+precise invocar o motor geral **deve** passar por
+`fallback_to_general_engine`, nunca chamar `RationalFunction` diretamente.
+
+`Checkpoint<'a> = &'a mut dyn FnMut() -> bool` é definido em
+`oderom-expr/src/localized.rs`, espelhando (não importando — a
+dependência vai na direção oposta) o tipo já usado em
+`oderom-components::curvature`. Granularidade: grossa no laço externo
+(um `checkpoint()` por componente independente, mesmo padrão de
+`christoffel_checkpointed` e companhia) mais um `checkpoint()`
+obrigatório dentro de `fallback_to_general_engine` — nada dentro da
+aritmética de `Poly` (`add`/`mul`/`exact_div`), que já é barata o
+suficiente (28ms/672ms de ponta a ponta, medido) para que checagem fina
+custasse mais do que protege.
+
+Estouro de orçamento erra com a computação inteira — nunca resultado
+parcial —, com uma nova variante, `ComponentError::LocalizationFallbackBudgetExceeded`
+(`oderom-components/src/error.rs`), carregando o nome do componente
+sendo calculado (`Gamma^0_{{00}}`, `R^0_{{001}}`, etc. -- conceito que
+`oderom-expr` propriamente não tem, por isso a conversão acontece uma
+camada acima, em `curvature::budget_exceeded_error`), o denominador que
+escapou do conjunto de geradores, e o conjunto de geradores em vigor
+naquele momento — exatamente a entrada de que precisa a decisão
+"admitir esse fator como gerador ou não". Verificado disparando de
+verdade, não só existindo: `oderom-expr/src/localized.rs`'s
+`the_execution_budget_actually_fires_at_the_fallback_boundary` (nível do
+motor, controle preciso do ponto de disparo) e
+`oderom-components/tests/kerr.rs`'s
+`christoffel_localized_reports_the_escaped_denominator_when_the_budget_runs_out`
+(nível do pipeline real, métrica sintética `1/(x-1)^3` desenhada para
+forçar o fallback, já que o Kerr real não cai mais nele).
+
+**Independência de ordem, verificada, não suposta**: o conserto do
+`sin(θ)²`-antes-de-`sin(θ)` (recuperação de fator repetido via
+`gcd(p, dp/dvar)`) estabeleceu um invariante testável —
+`oderom-expr/src/localized.rs`'s módulo `order_independence`, exaustivo
+(nunca amostrado) sobre `4! = 24` ordenações de `{Σ, Δ, sin θ, sin²θ}`,
+mais o caso nomeado explicitamente que causou o bug original, mais uma
+terceira checagem específica: um candidato composto (`Σ·Δ`) misturado
+com seus próprios fatores, exaustivo sobre `3! = 6` ordenações. Achado
+ao construir esse terceiro teste (registrado aqui porque uma primeira
+versão dele comparou dois *conjuntos diferentes* — `{Σ·Δ, Σ}` contra
+`{Σ, Δ}` — e leu a diferença como uma suposta falha de independência de
+ordem): não há falha real. Uma vez que cada elemento do *mesmo* conjunto
+tem chance de ser apresentado (o que uma permutação de verdade garante),
+`Σ·Δ` apresentado primeiro ainda recupera `Σ` via `find_repeated_factor`,
+e o `Δ` que aparece depois na mesma ordenação é admitido normalmente
+contra ele — o conjunto final converge para `{Σ, Δ}` independentemente
+da posição. Registrado como o processo real de verificação, não só o
+resultado, porque a comparação inválida quase virou um relatório de
+limitação inexistente.
+
+**Overhead medido, não desprezível — registrado, não otimizado ainda**
+(regra explícita desta fase: parar e avisar antes de otimizar). Três
+medições consecutivas em release, `examples/kerr.od`:
+
+| Estágio | Antes (Fase anterior) | Depois (com Checkpoint) |
+|---|---|---|
+| `christoffel_localized` | 28ms | ~25-27ms (dentro do ruído) |
+| `riemann_mixed_localized` | 672ms | **~800-870ms** (+20-30%) |
+| `ricci_tensor_localized` | 7.5ms | ~10.6-10.9ms |
+
+`riemann_mixed_localized` é o estágio mais caro e o que mais cresceu.
+Zero fallbacks em ambos os testes de ouro (inalterado). Hipótese não
+verificada (registrada, não investigada): o custo pode vir não da
+chamada de `checkpoint()` em si (barata), mas de `&mut dyn FnMut() ->
+bool` sendo passado por referência através de muito mais quadros de
+pilha na recursão de `expr_to_localized`/`add`/`reciprocal_pow` (agora
+todos retornando `Result`), possivelmente inibindo alguma otimização/
+inlining que existia antes. Não investigado further nesta fase, por
+instrução explícita.

@@ -51,6 +51,63 @@ use crate::rational_function::{poly_gcd, RationalFunction};
 use crate::BigScalar;
 use crate::Expr;
 
+/// Same shape as `oderom_components::curvature::Checkpoint` -- mirrored,
+/// not shared, because `oderom-expr` cannot depend on
+/// `oderom-components` (the dependency runs the other way). Checked
+/// once per component by a caller's outer loop (coarse -- see
+/// `curvature.rs`'s `*_localized_checkpointed` functions) and, inside
+/// this module, exactly once more at the one place execution can leave
+/// the localized representation for the general engine
+/// (`fallback_to_general_engine`) -- never inside `Poly`'s own
+/// arithmetic, which is cheap enough (28ms/672ms measured end to end,
+/// DESIGN-RATIONAL-FORM.md section 8.5) that finer-grained checking
+/// would cost more than it protects.
+pub type Checkpoint<'a> = &'a mut dyn FnMut() -> bool;
+
+/// What escaped the localization set and had to fall back to the
+/// general engine, at the moment the caller's execution budget had
+/// already run out -- named precisely so a real hang has an actionable
+/// next step (DESIGN-RATIONAL-FORM.md section 8's own rule: this is
+/// exactly the input to "admit this factor as a generator or not").
+/// `oderom-components::curvature`'s `ComponentError::LocalizationFallbackBudgetExceeded`
+/// wraps this with the one piece of context this crate doesn't have --
+/// which tensor component was being computed.
+#[derive(Debug, Clone)]
+pub struct LocalizationBudgetExceeded {
+    /// The denominator expression that did not belong to the known
+    /// generator set and forced the general-engine fallback.
+    pub denominator: Expr,
+    /// Every generator known to `ctx` at the moment the budget ran out
+    /// (seeds plus anything admitted mid-computation), in acceptance
+    /// order.
+    pub generators: Vec<Expr>,
+}
+
+impl std::fmt::Display for LocalizationBudgetExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let gens = self.generators.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ");
+        write!(f, "denominador `{}` saiu do conjunto de geradores localizados [{gens}] e o motor geral não terminou dentro do orçamento", self.denominator)
+    }
+}
+
+impl std::error::Error for LocalizationBudgetExceeded {}
+
+/// The *only* place `RationalFunction`'s general engine gets invoked
+/// from within this module (DESIGN-RATIONAL-FORM.md section 8's
+/// "unify the fallback boundary" rule) -- both call sites that used to
+/// call `RationalFunction::from_raw`/`.pow()` directly now go through
+/// here, so "the fallback boundary always carries the execution budget"
+/// is a structural guarantee (one function to audit), not a convention
+/// that depends on every future call site remembering to check.
+fn fallback_to_general_engine(num: Poly, den: Poly, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<RationalFunction, LocalizationBudgetExceeded> {
+    if checkpoint() {
+        let denominator = poly_to_expr(&den, &ctx.table);
+        let generators = ctx.generator_sources().into_iter().cloned().collect();
+        return Err(LocalizationBudgetExceeded { denominator, generators });
+    }
+    Ok(RationalFunction::from_raw(num, den, &mut ctx.table))
+}
+
 /// One localization generator: its canonical `Poly` form (built once,
 /// against `LocalizationContext`'s own persistent [`AtomTable`]) and the
 /// `Expr` it came from, kept only for diagnostics/logging.
@@ -157,6 +214,7 @@ fn plain_poly_of(e: &Expr, table: &mut AtomTable) -> Poly {
 /// avoid), so `overflow` alone can still carry unreduced content; only
 /// the final top-level result is reduced against it once, via the
 /// existing general engine, in [`normalize_localized`].
+#[derive(Debug)]
 struct LocalizedRational {
     num: Poly,
     den: Vec<(usize, u32)>,
@@ -231,7 +289,7 @@ impl LocalizedRational {
     }
 
 
-    fn add(&self, other: &Self, ctx: &mut LocalizationContext) -> Self {
+    fn add(&self, other: &Self, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Self, LocalizationBudgetExceeded> {
         let mut merged_den: Vec<(usize, u32)> = self.den.clone();
         merge_max(&mut merged_den, &other.den);
 
@@ -275,13 +333,13 @@ impl LocalizedRational {
             let other_num_over_self_overflow = other_num_scaled.mul(&self.overflow, &mut ctx.table);
             let combined_overflow_input_num = self_num_over_other_overflow.add(&other_num_over_self_overflow);
             let combined_overflow_input_den = self.overflow.mul(&other.overflow, &mut ctx.table);
-            let rf = RationalFunction::from_raw(combined_overflow_input_num, combined_overflow_input_den, &mut ctx.table);
+            let rf = fallback_to_general_engine(combined_overflow_input_num, combined_overflow_input_den, ctx, checkpoint)?;
             (rf.num, rf.den)
         };
 
         let mut result = LocalizedRational { num: combined_num, den: merged_den, overflow: combined_overflow };
         result.reduce_against_own_generators(ctx);
-        result
+        Ok(result)
     }
 }
 
@@ -494,32 +552,32 @@ fn find_repeated_factor(remainder: &Poly, ctx: &mut LocalizationContext) -> Opti
 /// recursive shape exactly, generator-by-`Expr`-variant, but building
 /// `LocalizedRational`s (which never call the general `poly_gcd` in
 /// `add`/`mul`) instead of `RationalFunction`s (which always do).
-fn expr_to_localized(e: &Expr, ctx: &mut LocalizationContext) -> LocalizedRational {
+fn expr_to_localized(e: &Expr, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<LocalizedRational, LocalizationBudgetExceeded> {
     match e {
-        Expr::Rational(s) => LocalizedRational::from_plain(Poly::constant(s.clone())),
-        Expr::Var(name) => LocalizedRational::from_plain(Poly::generator(ctx.table.var(name))),
+        Expr::Rational(s) => Ok(LocalizedRational::from_plain(Poly::constant(s.clone()))),
+        Expr::Var(name) => Ok(LocalizedRational::from_plain(Poly::generator(ctx.table.var(name)))),
         Expr::Add(terms) => {
             let mut acc = LocalizedRational::from_plain(Poly::zero());
             for t in terms {
-                let lr = expr_to_localized(t, ctx);
-                acc = acc.add(&lr, ctx);
+                let lr = expr_to_localized(t, ctx, checkpoint)?;
+                acc = acc.add(&lr, ctx, checkpoint)?;
             }
-            acc
+            Ok(acc)
         }
         Expr::Mul(factors) => {
             let mut acc = LocalizedRational::one();
             for f in factors {
-                let lr = expr_to_localized(f, ctx);
+                let lr = expr_to_localized(f, ctx, checkpoint)?;
                 acc = acc.mul(&lr, ctx);
             }
-            acc
+            Ok(acc)
         }
         Expr::Pow(base, n) => {
-            let base_lr = expr_to_localized(base, ctx);
+            let base_lr = expr_to_localized(base, ctx, checkpoint)?;
             if *n >= 0 {
-                base_lr.pow(*n as u32, ctx)
+                Ok(base_lr.pow(*n as u32, ctx))
             } else {
-                reciprocal_pow(&base_lr, (-*n) as u32, ctx)
+                reciprocal_pow(&base_lr, (-*n) as u32, ctx, checkpoint)
             }
         }
         // D-RF.6, same as `expr_to_rational`: the argument is
@@ -530,32 +588,32 @@ fn expr_to_localized(e: &Expr, ctx: &mut LocalizationContext) -> LocalizedRation
         Expr::Sin(arg) => {
             let canonical_arg = crate::normalize::normalize(arg);
             let id = ctx.table.sin(canonical_arg);
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
         Expr::Cos(arg) => {
             let canonical_arg = crate::normalize::normalize(arg);
             let id = ctx.table.cos(canonical_arg);
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
         Expr::Exp(arg) => {
             let canonical_arg = crate::normalize::normalize(arg);
             let id = ctx.table.exp(canonical_arg);
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
         Expr::Sinh(arg) => {
             let canonical_arg = crate::normalize::normalize(arg);
             let id = ctx.table.sinh(canonical_arg);
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
         Expr::Cosh(arg) => {
             let canonical_arg = crate::normalize::normalize(arg);
             let id = ctx.table.cosh(canonical_arg);
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
         Expr::Func { name, args, order } => {
             let canonical_args: Vec<Expr> = args.iter().map(crate::normalize::normalize).collect();
             let id = ctx.table.func(name.clone(), canonical_args, order.clone());
-            LocalizedRational::from_plain(Poly::generator(id))
+            Ok(LocalizedRational::from_plain(Poly::generator(id)))
         }
     }
 }
@@ -569,7 +627,7 @@ fn expr_to_localized(e: &Expr, ctx: &mut LocalizationContext) -> LocalizedRation
 /// generator it can (however many -- `Sigma*Delta` decomposes into
 /// *two* entries, not one composite blob) before deciding whether
 /// anything left over needs admitting or falling back.
-fn reciprocal_pow(base_lr: &LocalizedRational, m: u32, ctx: &mut LocalizationContext) -> LocalizedRational {
+fn reciprocal_pow(base_lr: &LocalizedRational, m: u32, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<LocalizedRational, LocalizationBudgetExceeded> {
     if !base_lr.den.is_empty() {
         // Rare, pathological case: the thing being inverted already had
         // its own known-generator denominator (a nested fraction inside
@@ -579,8 +637,9 @@ fn reciprocal_pow(base_lr: &LocalizedRational, m: u32, ctx: &mut LocalizationCon
         // factors through it.
         ctx.fallback_log.push("localized: reciprocal of an expression that itself already had a tracked denominator -- falling back to the general engine for this factor (nested fraction, outside this round's scope)".to_string());
         let full_den = base_lr.den.iter().fold(base_lr.overflow.clone(), |acc, &(idx, exp)| acc.mul(&ctx.generators[idx].poly.pow(exp, &mut ctx.table), &mut ctx.table));
-        let rf = RationalFunction::from_raw(base_lr.num.clone(), full_den, &mut ctx.table).pow(-(m as i32), &mut ctx.table);
-        return LocalizedRational { num: rf.num, den: Vec::new(), overflow: rf.den };
+        let rf = fallback_to_general_engine(base_lr.num.clone(), full_den, ctx, checkpoint)?;
+        let rf = rf.pow(-(m as i32), &mut ctx.table);
+        return Ok(LocalizedRational { num: rf.num, den: Vec::new(), overflow: rf.den });
     }
     let overflow_num_part = base_lr.overflow.pow(m, &mut ctx.table);
     let (decomposition, remainder) = classify_or_admit(&base_lr.num, ctx);
@@ -597,10 +656,10 @@ fn reciprocal_pow(base_lr: &LocalizedRational, m: u32, ctx: &mut LocalizationCon
             c_pow = c_pow * c.clone();
         }
         let inv = c_pow.recip().expect("a denominator's own leftover scalar is never zero");
-        LocalizedRational { num: overflow_num_part.scale(inv), den, overflow: Poly::constant(BigScalar::one()) }
+        Ok(LocalizedRational { num: overflow_num_part.scale(inv), den, overflow: Poly::constant(BigScalar::one()) })
     } else {
         let remainder_pow = remainder.pow(m, &mut ctx.table);
-        LocalizedRational { num: overflow_num_part, den, overflow: remainder_pow }
+        Ok(LocalizedRational { num: overflow_num_part, den, overflow: remainder_pow })
     }
 }
 
@@ -662,9 +721,9 @@ fn localized_to_expr(lr: &LocalizedRational, ctx: &mut LocalizationContext) -> E
 /// for every component of one metric's Christoffel/Riemann/Ricci/
 /// Kretschmann computation so a generator discovered in one stage is
 /// recognized in the next.
-pub fn normalize_localized(e: &Expr, ctx: &mut LocalizationContext) -> Expr {
-    let lr = expr_to_localized(e, ctx);
-    localized_to_expr(&lr, ctx)
+pub fn normalize_localized(e: &Expr, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Expr, LocalizationBudgetExceeded> {
+    let lr = expr_to_localized(e, ctx, checkpoint)?;
+    Ok(localized_to_expr(&lr, ctx))
 }
 
 #[cfg(test)]
@@ -704,7 +763,7 @@ mod tests {
     const VARS: &[(&str, f64)] = &[("r", 3.0), ("a", 0.7), ("M", 1.3), ("theta", 0.9)];
 
     fn assert_matches_general_engine(e: &Expr, ctx: &mut LocalizationContext) {
-        let localized = normalize_localized(e, ctx);
+        let localized = normalize_localized(e, ctx, &mut || false).unwrap();
         let general = general_normalize(e);
         let lv = eval(&localized, VARS);
         let gv = eval(&general, VARS);
@@ -717,7 +776,7 @@ mod tests {
         // (uncancelled): the whole point of reducing after every sum.
         let mut ctx = LocalizationContext::new(&[sigma_expr()]);
         let e = Expr::Pow(Box::new(sigma_expr()), -1) + Expr::Pow(Box::new(sigma_expr()), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(lr.den, vec![(0, 1)], "denominator degree grew instead of staying at Sigma^1: {:?}", lr.den);
         assert!(ctx.fallback_log().is_empty(), "{:?}", ctx.fallback_log());
         assert_matches_general_engine(&e, &mut ctx);
@@ -730,7 +789,7 @@ mod tests {
         // literal polynomial 1, not stay as Sigma/Sigma.
         let mut ctx = LocalizationContext::new(&[sigma_expr()]);
         let e = sigma_expr() * Expr::Pow(Box::new(sigma_expr()), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert!(lr.den.is_empty(), "{:?}", lr.den);
         assert!(lr.num.is_literal_one(), "expected the literal polynomial 1, got {:?}", lr.num.sorted_terms(&ctx.table));
     }
@@ -746,7 +805,7 @@ mod tests {
         // Kerr's Ricci "smaller" instead of zero.
         let mut ctx = LocalizationContext::new(&[sigma_expr()]);
         let e = Expr::Pow(Box::new(sigma_expr()), -1) - sigma_expr() * Expr::Pow(Box::new(sigma_expr().pow(2)), -1);
-        let result = normalize_localized(&e, &mut ctx);
+        let result = normalize_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(result, Expr::zero(), "{result:?}");
     }
 
@@ -760,7 +819,7 @@ mod tests {
         let mut ctx = LocalizationContext::new(&[delta_expr()]);
         assert_eq!(ctx.generator_count(), 1);
         let e = Expr::Pow(Box::new(sigma_expr()), -1);
-        let _ = expr_to_localized(&e, &mut ctx);
+        let _ = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(ctx.generator_count(), 2, "Sigma should have been auto-admitted as a second generator");
         assert!(ctx.fallback_log().is_empty(), "auto-admission should not itself count as a fallback: {:?}", ctx.fallback_log());
     }
@@ -777,7 +836,7 @@ mod tests {
         // dependency left.
         let mut ctx = LocalizationContext::new(&[]);
         let e = Expr::Pow(Box::new(Expr::var("theta").sin().pow(2)), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(lr.den, vec![(0, 2)], "{:?}", lr.den);
         assert!(ctx.fallback_log().is_empty(), "{:?}", ctx.fallback_log());
     }
@@ -795,7 +854,7 @@ mod tests {
         assert_eq!(ctx.generator_count(), 2);
         let sigma_times_delta = sigma_expr() * delta_expr();
         let e = Expr::Pow(Box::new(sigma_times_delta), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(ctx.generator_count(), 2, "must not have admitted a third, composite generator");
         assert!(ctx.fallback_log().is_empty(), "must not have fallen back: {:?}", ctx.fallback_log());
         let mut den = lr.den.clone();
@@ -818,7 +877,7 @@ mod tests {
         let x = Expr::var("x");
         let squared = (x.clone() - Expr::one()).pow(2);
         let e = Expr::Pow(Box::new(squared), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert_eq!(lr.den, vec![(0, 2)], "expected (x-1) recovered as generator 0 at exponent 2, got {:?}", lr.den);
         assert!(lr.overflow.is_literal_one());
         assert!(ctx.fallback_log().is_empty(), "{:?}", ctx.fallback_log());
@@ -843,13 +902,47 @@ mod tests {
         let x = Expr::var("x");
         let cubed = (x.clone() - Expr::one()).pow(3);
         let e = Expr::Pow(Box::new(cubed), -1);
-        let lr = expr_to_localized(&e, &mut ctx);
+        let lr = expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
         assert!(lr.den.is_empty(), "must not have been admitted as a tracked generator: {:?}", lr.den);
         assert!(!lr.overflow.is_literal_one(), "the (x-1)^3 factor must have landed in overflow instead");
         assert!(!ctx.fallback_log().is_empty(), "a fallback must have been logged");
         let vars: &[(&str, f64)] = &[("x", 5.0)];
         let localized_val = eval(&localized_to_expr(&lr, &mut ctx), vars);
         assert!((localized_val - 1.0 / 64.0).abs() < 1e-9, "{localized_val}");
+    }
+
+    #[test]
+    fn the_execution_budget_actually_fires_at_the_fallback_boundary() {
+        // A guardrail that was never seen tripping is not a guardrail
+        // (DESIGN-RATIONAL-FORM.md section 8, Phase 1): this
+        // deliberately drives execution into the one place this module
+        // ever calls the general engine (`add`'s overflow-combination
+        // branch, via `fallback_to_general_engine`) with a checkpoint
+        // that reports the budget already exhausted, and checks the
+        // resulting diagnostic names the actual escaped denominator and
+        // the generator set in play -- not just that *some* error came
+        // back.
+        let mut ctx = LocalizationContext::new(&[sigma_expr()]);
+        // (x-1)^3 forces overflow (not square-free even after one
+        // repeated-factor extraction -- see the test directly above).
+        let x = Expr::var("x");
+        let cubed = (x.clone() - Expr::one()).pow(3);
+        let lr_with_overflow = expr_to_localized(&Expr::Pow(Box::new(cubed), -1), &mut ctx, &mut || false).unwrap();
+        assert!(!lr_with_overflow.overflow.is_literal_one(), "test setup: expected a non-trivial overflow to force add()'s general-engine branch");
+
+        let other = LocalizedRational::from_plain(Poly::constant(BigScalar::one()));
+        let err = lr_with_overflow.add(&other, &mut ctx, &mut || true).expect_err("checkpoint reporting the budget exhausted must produce an error, not a value");
+
+        let rendered_denominator = err.denominator.to_string();
+        assert!(rendered_denominator.contains('x'), "expected the escaped (x-1)-shaped denominator named in the diagnostic, got {rendered_denominator:?}");
+        let rendered_generators: Vec<String> = err.generators.iter().map(|g| g.to_string()).collect();
+        assert_eq!(rendered_generators.len(), 1, "expected exactly Sigma (the one seeded generator) listed, got {rendered_generators:?}");
+
+        // Display must actually surface both pieces of information, not
+        // just carry them as unused struct fields.
+        let message = err.to_string();
+        assert!(message.contains(&rendered_denominator), "{message}");
+        assert!(message.contains(&rendered_generators[0]), "{message}");
     }
 
     #[test]
@@ -900,11 +993,110 @@ mod timing_probe {
             Expr::var("r").pow(2) - Expr::int(2) * Expr::var("M") * Expr::var("r") + Expr::var("a").pow(2),
         ]);
         let t0 = std::time::Instant::now();
-        let _ = normalize_localized(&e, &mut ctx);
+        let _ = normalize_localized(&e, &mut ctx, &mut || false).unwrap();
         println!("normalize_localized: {:?}", t0.elapsed());
 
         let t0 = std::time::Instant::now();
         let _ = general_normalize(&e);
         println!("general normalize:   {:?}", t0.elapsed());
+    }
+}
+
+/// Order-independence of the final generator set (DESIGN-RATIONAL-FORM.md
+/// section 8, Phase 1.4): the repeated-factor recovery that fixed
+/// `sin(theta)^2`-before-`sin(theta)` established an invariant worth
+/// asserting on its own, not just re-testing the one bug that motivated
+/// it. Exhaustive (not sampled) over every ordering of a small,
+/// genuinely *atomic* candidate set -- see this module's own doc
+/// comment below for why "atomic" is doing real work in that sentence.
+#[cfg(test)]
+mod order_independence {
+    use super::*;
+
+    fn sigma() -> Expr {
+        Expr::var("r").pow(2) + Expr::var("a").pow(2) * Expr::var("theta").cos().pow(2)
+    }
+    fn delta() -> Expr {
+        Expr::var("r").pow(2) - Expr::int(2) * Expr::var("M") * Expr::var("r") + Expr::var("a").pow(2)
+    }
+
+    /// Feeds `order` to a fresh, unseeded context, one candidate at a
+    /// time (each as `1/candidate`, the same shape a real denominator
+    /// takes), and returns the resulting generator set rendered as a
+    /// sorted `Vec<String>` -- a canonical *set* comparison, not a list:
+    /// two orderings that admit the same generators in different
+    /// sequence must compare equal.
+    fn final_generator_set(order: &[Expr]) -> Vec<String> {
+        let mut ctx = LocalizationContext::new(&[]);
+        for candidate in order {
+            let e = Expr::Pow(Box::new(candidate.clone()), -1);
+            expr_to_localized(&e, &mut ctx, &mut || false).unwrap();
+        }
+        let mut set: Vec<String> = ctx.generator_sources().iter().map(|g| g.to_string()).collect();
+        set.sort();
+        set
+    }
+
+    fn assert_all_permutations_agree(candidates: &[Expr]) {
+        let reference = final_generator_set(candidates);
+        let mut perm = candidates.to_vec();
+        permute(&mut perm, 0, &mut |ordering| {
+            assert_eq!(final_generator_set(ordering), reference, "ordering {ordering:?} produced a different generator set than {candidates:?}");
+        });
+    }
+
+    /// Heap's algorithm -- exhaustive, not sampled, deterministic (no
+    /// randomness): small enough here (<= 24 orderings) that there is
+    /// no reason to settle for a sample.
+    fn permute(arr: &mut Vec<Expr>, k: usize, visit: &mut dyn FnMut(&[Expr])) {
+        if k == arr.len() {
+            visit(arr);
+            return;
+        }
+        for i in k..arr.len() {
+            arr.swap(k, i);
+            permute(arr, k + 1, visit);
+            arr.swap(k, i);
+        }
+    }
+
+    #[test]
+    fn kerr_shaped_atomic_denominators_reach_the_same_generator_set_regardless_of_order() {
+        // Sigma, Delta, sin(theta), sin(theta)^2 -- every one of these
+        // is atomic in the sense that matters here: none is a *product*
+        // of two of the others (contrast the composite case this same
+        // module's doc comment documents as a real, separate limit).
+        // 4! = 24 orderings, exhausted.
+        assert_all_permutations_agree(&[sigma(), delta(), Expr::var("theta").sin(), Expr::var("theta").sin().pow(2)]);
+    }
+
+    #[test]
+    fn the_exact_ordering_that_caused_the_original_bug_is_named_explicitly() {
+        // sin(theta)^2 before bare sin(theta) -- the literal ordering
+        // `oderom-cli`'s real Kerr run hit before repeated-factor
+        // recovery existed. Named on its own, not just folded into the
+        // exhaustive permutation test above, so this specific regression
+        // stays visible by name if it ever breaks again.
+        let bug_order = [Expr::var("theta").sin().pow(2), Expr::var("theta").sin(), sigma(), delta()];
+        let natural_order = [sigma(), delta(), Expr::var("theta").sin(), Expr::var("theta").sin().pow(2)];
+        assert_eq!(final_generator_set(&bug_order), final_generator_set(&natural_order));
+    }
+
+    /// A composite candidate (`Sigma*Delta`) mixed into the same set as
+    /// its own factors, exhausted over all `3! = 6` orderings. Caught by
+    /// this test's own construction, worth recording precisely rather
+    /// than silently: a first version of this check compared two
+    /// *different* sets (`{Sigma*Delta, Sigma}` against `{Sigma, Delta}`)
+    /// and misread the mismatch as a genuine order-dependence bug --
+    /// once every element of the *same* fixed set gets a chance to be
+    /// presented (which is exactly what a real permutation guarantees,
+    /// and what that first, invalid comparison never actually did),
+    /// `Sigma*Delta` presented first still recovers `Sigma` via
+    /// `find_repeated_factor`, and the plain `Delta` that follows later
+    /// in the same ordering is admitted cleanly against it -- the final
+    /// set converges to `{Sigma, Delta}` regardless of position.
+    #[test]
+    fn composite_mixed_with_its_own_factors_still_reaches_the_same_generator_set() {
+        assert_all_permutations_agree(&[sigma() * delta(), sigma(), delta()]);
     }
 }
