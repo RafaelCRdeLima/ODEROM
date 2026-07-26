@@ -850,7 +850,7 @@ fn gcd(a: UPoly, b: UPoly, table: &mut AtomTable) -> UPoly {
 /// `debug_assert` its own count is strictly smaller). Base case: no
 /// variables left at all, both inputs are plain `BigScalar` constants --
 /// ordinary integer GCD, already implemented (`BigScalar::gcd`).
-fn poly_gcd(a: &Poly, b: &Poly, table: &mut AtomTable) -> Poly {
+pub(crate) fn poly_gcd(a: &Poly, b: &Poly, table: &mut AtomTable) -> Poly {
     // Suppressed for the *entire* recursive descent (every nested
     // `poly_gcd_bounded` call, including its own content-GCD recursion,
     // reads the same thread-local) -- see `TrigRewriteSuppressor` and

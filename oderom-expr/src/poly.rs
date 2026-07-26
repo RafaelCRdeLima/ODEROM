@@ -457,6 +457,52 @@ impl Poly {
     }
 }
 
+impl Poly {
+    /// Every distinct generator appearing in `self`, in no particular
+    /// order (used by `localized.rs`'s square-free check: differentiate
+    /// once per generator a candidate factor actually contains, not once
+    /// per generator that exists anywhere in the computation).
+    pub(crate) fn generators_present(&self) -> Vec<AtomId> {
+        let mut ids: Vec<AtomId> = Vec::new();
+        for term in &self.terms {
+            for &(id, _) in &term.generators {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        ids
+    }
+
+    /// Formal partial derivative with respect to one generator, treating
+    /// every atom (`Var` or an interned `Sin`/`Cos`/... argument alike)
+    /// as an independent ring variable -- ordinary monomial calculus
+    /// (`d/dx (c*x^e*rest) = c*e*x^(e-1)*rest`), no chain rule, no
+    /// relation to [`crate::diff::diff`] (which operates on `Expr` and
+    /// does know the chain rule/`sin`-`cos` relationship; this is a
+    /// purely formal, ring-level derivative used only to test
+    /// square-freeness of a candidate localization generator, per
+    /// DESIGN-RATIONAL-FORM.md section 8.2 -- `gcd(P, dP/dvar) = 1` for
+    /// every variable `P` depends on is the standard test).
+    pub(crate) fn formal_derivative(&self, wrt: AtomId) -> Poly {
+        let mut acc = Poly::zero();
+        for term in &self.terms {
+            let Some(&(_, e)) = term.generators.iter().find(|&&(id, _)| id == wrt) else {
+                continue;
+            };
+            if e == 0 {
+                continue;
+            }
+            let new_coeff = term.coeff.clone() * BigScalar::from_i64(e as i64);
+            let new_generators: Vec<(AtomId, u32)> =
+                term.generators.iter().filter_map(|&(id, ee)| if id == wrt { if ee > 1 { Some((id, ee - 1)) } else { None } } else { Some((id, ee)) }).collect();
+            acc = acc.add(&Poly { terms: vec![Term { coeff: new_coeff, generators: new_generators }] });
+        }
+        debug_assert_invariant(&acc);
+        acc
+    }
+}
+
 fn content_key(table: &AtomTable, term: &Term) -> Vec<(AtomKey, u32)> {
     let mut v: Vec<(AtomKey, u32)> = term.generators.iter().map(|&(id, e)| (table.key(id).clone(), e)).collect();
     v.sort();

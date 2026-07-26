@@ -185,7 +185,7 @@ fn rational_to_expr(rf: &RationalFunction, table: &AtomTable) -> Expr {
     }
 }
 
-fn poly_to_expr(p: &Poly, table: &AtomTable) -> Expr {
+pub(crate) fn poly_to_expr(p: &Poly, table: &AtomTable) -> Expr {
     let terms = p.sorted_terms(table);
     if terms.is_empty() {
         return Expr::zero();

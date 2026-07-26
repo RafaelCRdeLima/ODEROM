@@ -549,3 +549,255 @@ passos reais, mas cada um é uma extensão do próprio motor racional
 (mesma escala de decisão que este documento inteiro já foi), não um
 ajuste pontual — decisão para uma rodada própria, não para ser
 resolvida de passagem enquanto se mexe em outra coisa.
+
+## 8. Denominadores estruturados (Rodada Kerr): aprovado, com o conjunto de geradores medido, não suposto
+
+Ataque aprovado para 7.1 especificamente (7.2/Gödel continua fora de
+escopo desta rodada — mecanismo de geradores exponenciais, não de
+denominadores estruturados; não tentar cobrir os dois com o mesmo
+código). Trocar MDC multivariado geral por denominadores estruturados:
+representar uma função racional como `(numerador em Poly, multiconjunto
+de (fator, expoente))` sobre o anel localizado nos denominadores
+declarados da métrica. Fechado sob produto, soma e derivada — produto e
+quociente nunca chamam MDC; soma só precisa de teste de divisibilidade
+exata por fator já conhecido.
+
+### 8.1 Diagnóstico medido antes de codar (não suposto)
+
+`oderom-cli/tests/diagnostic_kerr_denominators.rs`, lendo
+`examples/kerr.od` pelo parser real (não pela API Rust): `christoffel`
+de Kerr completo, 20.7s em release, 20 componentes independentes
+não-nulas, exatamente **7 denominadores distintos**. Conferidos um a um
+por álgebra direta (substituição `s = sin²θ`, expansão binomial/trinomial
+comparada termo a termo):
+
+| Denominador | Igual a |
+|---|---|
+| (grande, 15 termos) | `Σ²·Δ` |
+| (médio, 6 termos) | `Σ²` |
+| (grande, 10 termos) | `Σ³` |
+| (médio, 8 termos) | `Σ·Δ` |
+| `±(a²-a²sin²θ+r²)` (2 componentes, sinal oposto) | `±Σ` |
+| (médio, 6 termos) | `sin(θ)·Σ²` |
+
+Todos os sete são potência de `{Σ, Δ, sin θ}` — nenhum denominador fora
+desse conjunto multiplicativo apareceu. O único ajuste em relação à
+hipótese original (`{Σ, Δ}`) é o fator extra `sin θ`, esperado: `sin θ`
+já aparece diretamente em `g_φφ`, não vem de `Σ`/`Δ`.
+
+### 8.2 Livre-de-quadrados/irredutibilidade sobre `{Σ, Δ, sin θ}`, verificado executavelmente
+
+`oderom-expr/tests/kerr_generators.rs` — não só conferido à mão, rodado
+contra o motor `normalize()`/`denominator_degree` já em produção (que já
+faz MDC multivariado recursivo de verdade, seção 6): dividir `X` por `Y`
+e comparar o grau do denominador resultante contra o grau de `Y`
+sozinho — se bater, nada cancelou, `X` e `Y` são coprimos; se cair,
+havia fator comum. Todos os pares passam: `Σ`/`Δ` coprimos, `Σ`/`sin θ`
+coprimos, `Δ`/`sin θ` coprimos, e cada gerador é livre-de-quadrados
+(`gcd(P, dP/dvar) = 1` para cada variável que `P` carrega). Teste de
+sanidade incluído (`Σ` contra `Σ²` — deve **falhar** a checagem de
+coprimalidade) confirma que o método realmente detecta um fator
+compartilhado quando existe, não passa vacuamente.
+
+### 8.3 Dependência de convenção trigonométrica — registrado, não uma suposição livre
+
+**A validade do conjunto `{Σ, Δ, sin θ}` como geradores irredutíveis
+depende da convenção trigonométrica já em vigor neste repositório
+(D-RF.7), não é um fato absoluto sobre `Σ`.** Hoje `sin` é o gerador
+primário de expoente livre e `cos` é sempre reduzido a grau `<=1` via
+`cos² -> 1-sin²` (`oderom-expr/src/poly.rs`). Nessa base:
+
+- `sin θ` é gerador de grau 1 do anel — irredutível **porque todo
+  gerador de grau 1 é irredutível**, não por tratamento especial.
+- `Σ = r² + a²cos²θ`, ao passar por essa redução, vira
+  `r² + a² - a²sin²θ = (r²+a²) - (a sin θ)²` — uma diferença de quadrados
+  que **não fatora sobre `Q(r,a)`** porque `r²+a²` não é um quadrado
+  perfeito nesse corpo (forma quadrática irredutível padrão). `Σ`
+  permanece irredutível *nesta base*.
+
+**Se a convenção fosse invertida** (`cos` gerador primário de expoente
+livre, `sin` reduzido a grau `<=1` via `sin² -> 1-cos²`), a mesma
+`Σ` viraria `r² + a²cos²θ` com `cos²θ` livre — ainda irredutível, sem
+mudança. Mas **`sin θ` deixaria de ser gerador**: `sin²θ = 1-cos²θ =
+(1-cos θ)(1+cos θ)` — produto de dois fatores próprios, **redutível**.
+O denominador `sin(θ)·Σ²` medido em 8.1 teria que ser re-expresso via
+`(1-cos θ)` e `(1+cos θ)` como geradores de localização (dois fatores
+novos, não um), ou a base trigonométrica precisaria ficar fixa e
+documentada como parte do contrato do motor. **Nenhuma mudança de base
+está sendo feita agora** — isto é só o registro de que o conjunto de
+geradores de 8.1/8.2 é uma consequência de D-RF.7, e trocar D-RF.7 no
+futuro exige reavaliar esta seção inteira, não só ajustar um valor.
+
+### 8.4 Dois requisitos do motor
+
+1. **Redução após toda soma**: depois de somar duas `RationalFunction`s
+   (numerador combinado sobre denominador comum), testar divisibilidade
+   exata do numerador por cada gerador do multiconjunto de denominador e
+   baixar o expoente correspondente enquanto dividir. Sem isso a forma
+   não é canônica — sobra fator no numerador que deveria ter cancelado,
+   e o Ricci de Kerr não reduz a zero, só fica menor (exatamente o
+   sintoma que já causou o teto anterior, seção 1, item 3).
+2. **Conjunto de geradores derivado, nunca hardcoded para Kerr**: o
+   multiconjunto de localização nasce dos denominadores que a própria
+   métrica declara (`g_rr`, qualquer componente com fração) mais os
+   determinantes de bloco que `metric_inverse` calcula
+   (`DESIGN-M2.md`, "D-M2.1 revisitada") — nunca uma lista fixa
+   `[Sigma, Delta]` escrita a mão em algum lugar do código. Se, durante
+   a computação, aparecer um denominador fora desse conjunto: não
+   falhar. Tentar admitir o fator novo como gerador se ele for
+   irredutível (mesmo teste executável de 8.2, aplicado ao fator novo
+   contra o conjunto já conhecido); caso contrário (redutível, ou
+   irredutibilidade não decidida a tempo), cair no caminho de MDC geral
+   já existente (seção 6) para aquela expressão específica, com log —
+   correção acima de desempenho, mesma regra de 2.6 ("reduzido ou não,
+   nunca errado").
+
+Fora de escopo, registrado para não ser esquecido: Gödel (`exp(a)^n`
+nunca fundindo em `exp(n*a)`, seção 7.2) é um mecanismo diferente
+(geradores exponenciais, identidade de fusão de potência) e não deve
+ser resolvido pelo mesmo código que ataca 7.1.
+
+## 8.5 Status: implementado — Kerr fecha, os dois erros reais que apareceram no caminho
+
+`oderom-expr/src/localized.rs` (`LocalizationContext`, `normalize_localized`,
+`pub(crate) fn localization_generators` em `oderom-components/src/curvature.rs`)
+implementados e ligados a `christoffel_localized`/`riemann_mixed_localized`/
+`ricci_tensor_localized`/`lower_index_localized`/`raise_index_localized`/
+`kretschmann_localized` — funções irmãs das existentes, que continuam
+inalteradas (Schwarzschild/Reissner-Nordström continuam no motor geral,
+zero mudança de comportamento).
+
+**Resultado medido, ponta a ponta, `examples/kerr.od`, release**:
+
+| Estágio | Tempo |
+|---|---|
+| `metric_inverse` | ~14ms |
+| `christoffel_localized` | 28ms |
+| `riemann_mixed_localized` | 672ms |
+| `ricci_tensor_localized` | 7.5ms |
+| **Ricci de Kerr** | **identicamente zero, nas 16 componentes** |
+| `lower_first_index_localized` + `kretschmann_localized` | (total do teste completo: 3.8s) |
+| **Kretschmann de Kerr** | **bate exatamente com a forma fechada**, `48M²(r²-a²cos²θ)[(r²+a²cos²θ)²-16r²a²cos²θ]/(r²+a²cos²θ)⁶` |
+
+Contra o motor geral: `christoffel` 70.5s, `riemann_mixed` não termina em
+180s (seção 7.1). `oderom-components/tests/kerr.rs`:
+`ricci_of_kerr_is_identically_zero_via_the_localized_engine`,
+`kretschmann_of_kerr_matches_the_closed_form_via_the_localized_engine` —
+ambos testes ativos, não `#[ignore]`d (os dois testes originais que
+citavam este limite continuam `#[ignore]`d de propósito: eles exercitam
+especificamente o motor *geral*, e esse continua com o mesmo teto —
+mudar isso seria uma decisão de trocar o motor padrão do projeto, fora
+do escopo desta rodada).
+
+**Dois erros reais, achados por medição, não por inspeção — cada um
+teria, sozinho, deixado Kerr no mesmo lugar de antes (correto na teoria,
+impraticável na prática):**
+
+1. **`add()` chamava o motor geral mesmo sem overflow nenhum.** A
+   primeira versão de `LocalizedRational::add` sempre roteava a
+   combinação dos denominadores por `RationalFunction::from_raw` (que
+   sempre roda `poly_gcd` de conteúdo, mesmo quando o denominador
+   `overflow` de ambos os lados já era `1`) — pagando o custo do MDC
+   geral sobre o numerador da soma, que pode ser grande, em toda soma,
+   mesmo quando não havia nada de fato para reduzir. `christoffel_localized`
+   já saía rápido (nada de overflow no Christoffel de Kerr), mas
+   qualquer soma subsequente que introduzisse um overflow, por menor que
+   fosse, reintroduzia o custo geral por trás de tudo que viesse depois.
+   Corrigido com um caminho rápido explícito: quando os dois lados têm
+   `overflow == 1`, a soma é só `Poly::add`, sem nenhuma chamada ao MDC.
+2. **Produto de dois geradores já conhecidos não decompunha.**
+   `ginv` de Kerr naturalmente produz `Sigma*Delta` como *um* polinômio
+   já multiplicado (nunca escrito assim por um humano — emerge de
+   combinar `g^rr = Delta/Sigma` com outros termos) — a primeira versão
+   de `classify_or_admit` só testava igualdade contra um gerador inteiro
+   de cada vez, então `Sigma*Delta` não batia com nenhum, falhava o
+   teste de coprimalidade contra `Sigma` (compartilha o fator `Sigma`,
+   corretamente detectado) e caía no motor geral — só que isso acontecia
+   em praticamente todo componente de `riemann_mixed`, reproduzindo
+   exatamente o custo que o motor inteiro existe para evitar:
+   `christoffel_localized` terminava em 393ms mas `riemann_mixed_localized`
+   nunca retornava. Corrigido dividindo repetidamente por cada gerador
+   já conhecido (`Poly::exact_div`, nunca busca de MDC) antes de decidir
+   se sobrou algo para admitir ou para o motor geral — `Sigma*Delta`
+   agora decompõe em `{Sigma: 1, Delta: 1}` diretamente.
+
+Achado incidental, não corrigido (correto, só não maximamente fatorado):
+`sin(θ)²` aparece como denominador em alguns componentes antes de
+`sin(θ)` em si ter sido admitido como gerador (ordem de processamento) —
+`sin(θ)²` sozinho nunca seria admitido de qualquer forma (não é
+livre-de-quadrados), então esses casos caem no motor geral para aquele
+fator específico, correto e barato (grau 2), registrado em
+`ctx.fallback_log()`. Não é um bug: é exatamente o "reduzido ou não,
+nunca errado" de 2.6, aplicado ao novo motor.
+
+**Atualização — zero fallbacks, ∇g=0 reativado.** `classify_or_admit`
+ganhou uma terceira saída: quando o resto não é livre-de-quadrados,
+tenta recuperar o fator repetido via `gcd(resto, d(resto)/d(gerador))`
+(primeiro passo padrão de fatoração livre-de-quadrados, Yun) antes de
+desistir. Achado real, não hipotético: `sin(θ)²` aparecia como
+denominador em alguns componentes de Kerr *antes* de `sin(θ)` em si ter
+sido admitido como gerador (artefato da ordem de processamento dos
+componentes, não uma propriedade da métrica) — `sin(θ)²` sozinho
+corretamente falha livre-de-quadrados, mas `gcd(sin(θ)², 2sin(θ)) =
+sin(θ)` recupera exatamente o gerador certo. Com isso, os dois testes de
+ouro (`ricci_of_kerr_is_identically_zero_via_the_localized_engine`,
+`kretschmann_of_kerr_matches_the_closed_form_via_the_localized_engine`)
+rodam com **zero fallbacks** — `ctx.fallback_log().is_empty()` é
+asserção, não nota de rodapé. `kerr_christoffel_satisfies_metric_compatibility`
+(`oderom-cli/tests/kerr.rs`) também foi refeito sobre o motor localizado
+e saiu do `#[ignore]`: os 213s eram inteiramente o custo do motor geral
+sobre os denominadores de Kerr, não do `christoffel` em si — o mesmo
+teste agora completa em segundos junto com os outros dois neste arquivo.
+
+**Regra travada em código, registrada aqui para não se perder**:
+pertencimento ao conjunto de localização se decide por **divisão**
+(`Poly::exact_div` repetido contra cada gerador conhecido,
+`decompose_against_known_generators`), nunca por **casamento sintático**
+contra a forma como o denominador foi escrito. `Σ·Δ` nunca aparece
+escrito à mão em lugar nenhum — emerge de combinar `g^rr = Δ/Σ` com
+outros termos durante `christoffel`/`riemann_mixed`, já multiplicado.
+Testar "isso bate com um gerador conhecido, tal e qual" teria falhado
+silenciosamente (viraria fallback) em quase todo componente. A mesma
+lógica se estende agora ao próprio processo de admissão: um fator que
+falha livre-de-quadrados pode ainda conter, *dentro de si*, um gerador
+genuíno ainda não descoberto — também resolvido por divisão (o gcd com a
+derivada), não por inspeção da forma como o fator chegou.
+
+**Taxonomia de testes, revisada por um erro real desta rodada**: testes
+de identidade (∇g=0, simetrias de Riemann, Bianchi) pegam bug de
+implementação e são estruturalmente cegos a fixture errada — dada
+qualquer métrica simétrica invertível, os Christoffels construídos a
+partir dela satisfazem ∇g=0 automaticamente, então ∇g=0 nunca poderia
+ter pego o termo de frame-dragging faltante em `g_φφ` (o bug real desta
+rodada). Só pegam fixture errada os testes de fato específico *daquela*
+métrica: Ricci=0, a forma fechada do Kretschmann, o determinante do
+bloco reduzindo a `-Δsin²θ`, o limite `a→0` dando Schwarzschild, o tipo
+de Petrov. Regra adotada: toda fixture de métrica nova entra com pelo
+menos um fato verificável específico a ela, não só testes de identidade
+— um teste de identidade sozinho não é suficiente para confiar numa
+fixture nova.
+
+**Conclusão estratégica sobre biblioteca externa (FLINT/Symbolica),
+revisada**: o ganho de três ordens de grandeza (christoffel 70.5s → 28ms,
+riemann_mixed nunca termina em 180s → 672ms) não veio de um MDC mais
+rápido — veio de **não chamar MDC**. Uma biblioteca externa mais rápida
+no motor geral (FLINT, Symbolica) provavelmente compraria uma ou duas
+ordens de grandeza ali, e mesmo assim talvez não fechasse `riemann_mixed`
+de Kerr dentro de um orçamento razoável — o problema nunca foi a
+velocidade do MDC, foi precisar de MDC nenhum para um caso sem variável
+de polo única. A decisão de biblioteca externa (seção 6, nota final)
+não está morta, mas o gatilho que a reabriria não é mais Kerr — Kerr já
+fechou, com estrutura, sem ela. O próximo gatilho real seria uma métrica
+cujos denominadores emergentes não formem um conjunto pequeno,
+livre-de-quadrados e coprimo dois a dois (o "caminho de MDC geral" desta
+seção existindo precisamente para não travar nesse caso, só ficar mais
+lento) — isso ainda não apareceu em nenhum fixture real deste projeto.
+
+**Não integrado ao `oderom-cli` ainda** (o comando `oderom kretschmann
+examples/kerr.od` continua no motor geral, então continua lento/sem
+terminar para Kerr especificamente) — próximo passo: tentar localizar
+sempre que o conjunto de geradores puder ser derivado e passar na
+coprimalidade, caindo no motor geral quando não passar (agnóstico à
+forma da métrica, nunca condicionado a "é diagonal?"/"é Kerr?") — gated
+por um teste diferencial contra o corpus que o motor geral já resolve
+(Schwarzschild, Reissner-Nordström, S², Gödel).

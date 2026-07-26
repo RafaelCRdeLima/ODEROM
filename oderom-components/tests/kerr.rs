@@ -24,10 +24,13 @@
 //! below) -- `metric_inverse` is the new general entry point real
 //! callers use.
 
-use oderom_components::curvature::{christoffel, lower_first_index, metric_inverse, metric_inverse_diagonal, metric_block_structure, ricci_tensor, riemann_mixed, verify_metric_inverse};
+use oderom_components::curvature::{
+    christoffel, christoffel_localized, kretschmann_localized, lower_first_index, lower_first_index_localized, metric_inverse, metric_inverse_diagonal, metric_block_structure,
+    localization_generators, ricci_tensor, ricci_tensor_localized, riemann_mixed, riemann_mixed_localized, verify_metric_inverse,
+};
 use oderom_components::{Chart, ComponentError, ComponentTensor, Grid};
 use oderom_core::{Perm, Registry, SignedPerm, SlotSig, Variance};
-use oderom_expr::{normalize, Expr};
+use oderom_expr::{normalize, Expr, LocalizationContext};
 use smallvec::SmallVec;
 
 struct Kerr {
@@ -189,6 +192,81 @@ fn ricci_of_kerr_is_identically_zero() {
     }
 }
 
+/// The same golden check as `ricci_of_kerr_is_identically_zero` above,
+/// but through the structured-denominator engine
+/// (DESIGN-RATIONAL-FORM.md section 8, `oderom_expr::{LocalizationContext,
+/// normalize_localized}`) instead of the general recursive multivariate
+/// GCD that test is blocked on. Not `#[ignore]`d: this is the actual fix
+/// for section 7.1, not a restatement of the limit.
+#[test]
+fn ricci_of_kerr_is_identically_zero_via_the_localized_engine() {
+    let k = build().unwrap();
+    let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
+    let mut ctx = LocalizationContext::new(&seeds);
+    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
+    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx);
+    for b in 0..k.chart.dim() as u8 {
+        for d in 0..k.chart.dim() as u8 {
+            let component = ricci.get(&[b, d]);
+            assert!(component.is_zero(), "R_{{{b}{d}}} = {component:?}, expected 0 (Kerr is vacuum)");
+        }
+    }
+    // Structural, not timing: a fallback is the correct-but-slow path
+    // (`RationalFunction`'s general engine), and a future regression
+    // that silently routes more expressions through it would not fail
+    // this test's own value assertions above -- Ricci would still come
+    // out to zero, just slower, exactly the failure mode
+    // `oderom-expr/src/localized.rs`'s own `add()` fast-path bug had
+    // before it was found (28ms became well past 120s with no assertion
+    // anywhere noticing). Asserting the fallback count directly turns
+    // "got slow" into "test fails", which is the property that actually
+    // matters. Zero is achievable here (not merely "small"): the
+    // repeated-factor recovery in `classify_or_admit`
+    // (`oderom-expr/src/localized.rs`) resolves `sin(theta)^2` into
+    // `sin(theta)` even when encountered before any bare `sin(theta)`
+    // denominator has been admitted.
+    assert!(ctx.fallback_log().is_empty(), "expected zero fallbacks to the general engine, got: {:?}", ctx.fallback_log());
+}
+
+/// Kerr's Kretschmann scalar via the localized engine, matching the
+/// closed form named in `examples/kerr.od`'s own header:
+///
+/// ```text
+/// K = 48*M^2*(r^2-a^2*cos(theta)^2)*((r^2+a^2*cos(theta)^2)^2
+///     - 16*r^2*a^2*cos(theta)^2) / (r^2+a^2*cos(theta)^2)^6
+/// ```
+///
+/// The other half of this round's completion criterion alongside
+/// `ricci_of_kerr_is_identically_zero_via_the_localized_engine` above --
+/// together these two are what clearing `#[ignore]` on the original,
+/// general-engine-blocked tests in this file is standing in for.
+#[test]
+fn kretschmann_of_kerr_matches_the_closed_form_via_the_localized_engine() {
+    let k = build().unwrap();
+    let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
+    let mut ctx = LocalizationContext::new(&seeds);
+    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
+    let riem_cov = lower_first_index_localized(&k.registry, &k.chart, &riem_mixed, &k.g, &mut ctx).unwrap();
+    let kretschmann = kretschmann_localized(&k.chart, &riem_cov, &k.ginv, &mut ctx);
+
+    let m = Expr::var("M");
+    let a = Expr::var("a");
+    let r = Expr::var("r");
+    let theta = Expr::var("theta");
+    let sigma = r.clone().pow(2) + a.clone().pow(2) * theta.clone().cos().pow(2);
+    let expected = normalize(
+        &(Expr::int(48) * m.pow(2) * (r.clone().pow(2) - a.clone().pow(2) * theta.clone().cos().pow(2)) * (sigma.clone().pow(2) - Expr::int(16) * r.pow(2) * a.pow(2) * theta.cos().pow(2))
+            * Expr::Pow(Box::new(sigma), -6)),
+    );
+    assert_eq!(kretschmann, expected, "kretschmann={kretschmann:?}\nexpected={expected:?}");
+    // Same structural (not timing) regression guard as the Ricci test
+    // above: a fallback that silently reappeared here wouldn't fail
+    // this assertion's value check, only make it slower.
+    assert!(ctx.fallback_log().is_empty(), "expected zero fallbacks to the general engine, got: {:?}", ctx.fallback_log());
+}
+
 /// `lower_first_index` (fully covariant Riemann) exercised through
 /// Kerr's non-diagonal `g` at least once. `#[ignore]`d for the same
 /// reason as `ricci_of_kerr_is_identically_zero` above -- it depends on
@@ -215,4 +293,50 @@ fn riemann_covariant_of_kerr_lowers_cleanly_through_the_non_diagonal_metric() {
         }
     }
     assert!(any_nonzero, "Kerr's fully covariant Riemann tensor should not be identically zero");
+}
+
+/// Diagnostic (not an acceptance test -- prints instead of asserting),
+/// same discipline as `diagnostic_kerr.rs`. Measured once (release,
+/// this machine): `christoffel_localized` 28ms, `riemann_mixed_localized`
+/// 672ms, `ricci_tensor_localized` 7.5ms -- under 1s total, against the
+/// general engine's 70.5s/never-finishes-in-180s for the same two
+/// stages (`diagnostic_kerr.rs`'s own numbers). Run with:
+/// `cargo test -p oderom-components --release --test kerr -- --ignored
+/// --nocapture diagnostic_localized_engine_stage_timing`.
+#[test]
+#[ignore]
+fn diagnostic_localized_engine_stage_timing() {
+    use std::time::Instant;
+    let k = build().unwrap();
+    let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
+    use std::io::Write;
+    macro_rules! flushed {
+        ($($arg:tt)*) => {{
+            println!($($arg)*);
+            std::io::stdout().flush().unwrap();
+        }};
+    }
+    flushed!("seeds: {:?}", seeds.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    let mut ctx = LocalizationContext::new(&seeds);
+    flushed!("generator_count after seeding: {}", ctx.generator_count());
+
+    let t0 = Instant::now();
+    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
+    flushed!("christoffel_localized: {:?}  (generators now: {})", t0.elapsed(), ctx.generator_count());
+    flushed!("fallback_log after christoffel: {:?}", ctx.fallback_log());
+
+    let t0 = Instant::now();
+    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx);
+    flushed!("riemann_mixed_localized: {:?}  (generators now: {})", t0.elapsed(), ctx.generator_count());
+    flushed!("fallback_log after riemann_mixed: {:?}", ctx.fallback_log());
+
+    let t0 = Instant::now();
+    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx);
+    flushed!("ricci_tensor_localized: {:?}", t0.elapsed());
+
+    for b in 0..k.chart.dim() as u8 {
+        for d in 0..k.chart.dim() as u8 {
+            println!("R_{{{b}{d}}} = {}", ricci.get(&[b, d]));
+        }
+    }
 }

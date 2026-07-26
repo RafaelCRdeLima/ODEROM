@@ -21,7 +21,7 @@ use crate::error::ComponentError;
 use crate::grid::Grid;
 use crate::tensor::ComponentTensor;
 use oderom_core::{HeadId, Registry, Variance};
-use oderom_expr::{diff, isolate_linear, normalize, Expr};
+use oderom_expr::{diff, isolate_linear, normalize, normalize_localized, rationalize, LocalizationContext, Expr};
 
 /// `f` returning `Err` (a checkpoint cancelling, or a genuine
 /// `ComponentTensor::get` error in [`lower_first_index`]) stops the walk
@@ -433,6 +433,89 @@ pub fn christoffel_checkpointed(
     Ok(gamma)
 }
 
+/// The localization generator set for `g` (DESIGN-RATIONAL-FORM.md
+/// section 8.4, requirement 2): every distinct denominator appearing in
+/// `g`'s own declared components, plus the determinant of every
+/// [`metric_block_structure`] block of size >= 2 -- never a hardcoded
+/// list. For Kerr this produces (a superset of) `{Sigma, Delta}`
+/// (measured directly, `oderom-cli/tests/diagnostic_kerr_denominators.rs`);
+/// for a different metric it produces whatever that metric's own
+/// components and block determinants actually are, including the empty
+/// list for an all-diagonal metric with no fractional components at all
+/// (e.g. Schwarzschild in the reciprocal `-f`/`1/f` form still has `f`
+/// itself as a component denominator, so that case is not empty either,
+/// but nothing stops it from being if a future metric genuinely has no
+/// denominators of its own).
+///
+/// [`LocalizationContext::new`] itself re-checks every candidate
+/// (square-free, pairwise coprime) before accepting it, so a duplicate
+/// or a genuinely non-qualifying candidate here degrades gracefully
+/// (logged, folded into the general engine when actually needed) rather
+/// than corrupting the invariant everything else in `localized.rs`
+/// relies on.
+pub fn localization_generators(registry: &Registry, chart: &Chart, g: &ComponentTensor) -> Result<Vec<Expr>, ComponentError> {
+    let n = chart.dim();
+    let mut generators = Vec::new();
+    for i in 0..n as u8 {
+        for j in i..n as u8 {
+            let component = g.get(registry, &[i, j])?;
+            if component.is_zero() {
+                continue;
+            }
+            let (_, den) = rationalize(&component);
+            if den != Expr::one() {
+                generators.push(den);
+            }
+        }
+    }
+    let blocks = metric_block_structure(registry, chart, g)?;
+    let full_matrix = normalized_matrix(registry, chart, g)?;
+    for block in &blocks {
+        if block.len() < 2 {
+            continue;
+        }
+        let sub: Vec<Vec<Expr>> = block.iter().map(|&i| block.iter().map(|&j| full_matrix[i as usize][j as usize].clone()).collect()).collect();
+        let det = determinant_symbolic(&sub, &mut || false)?;
+        if !det.is_zero() {
+            generators.push(det);
+        }
+    }
+    Ok(generators)
+}
+
+/// Same as [`christoffel_checkpointed`], but reduces every component
+/// against `ctx`'s localization generators (DESIGN-RATIONAL-FORM.md
+/// section 8) instead of relying solely on the general recursive
+/// multivariate GCD `normalize()` calls into -- the fix for a
+/// denominator with no single pole variable (Kerr's `Sigma`, section
+/// 7.1). `ctx` should be seeded via [`localization_generators`] and
+/// shared with every later stage of the same metric's computation
+/// (`riemann_mixed_localized`, `ricci_tensor_localized`) so a generator
+/// discovered in one stage is recognized in the next.
+pub fn christoffel_localized(registry: &Registry, chart: &Chart, g: &ComponentTensor, ginv: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    let n = chart.dim();
+    let mut gamma = Grid::new(n, 3);
+    for a in 0..n as u8 {
+        for b in 0..n as u8 {
+            for c in 0..n as u8 {
+                let mut sum = Expr::zero();
+                for d in 0..n as u8 {
+                    let ad = ginv.get(&[a, d]);
+                    if ad.is_zero() {
+                        continue;
+                    }
+                    let term = diff(&g.get(registry, &[d, c])?, chart.coord(b))
+                        + diff(&g.get(registry, &[d, b])?, chart.coord(c))
+                        + Expr::int(-1) * diff(&g.get(registry, &[b, c])?, chart.coord(d));
+                    sum = sum + ad * term;
+                }
+                gamma.set(&[a, b, c], normalize_localized(&(Expr::rational(1, 2) * sum), ctx));
+            }
+        }
+    }
+    Ok(gamma)
+}
+
 /// The geodesic equation, one closed-form equation per coordinate
 /// (Marco 6 step 4, round B -- `DESIGN-M6-PREP.md` section 1 built the
 /// machinery this reuses unchanged, nothing new added to `Expr`):
@@ -656,6 +739,104 @@ pub fn riemann_mixed_checkpointed(chart: &Chart, gamma: &Grid, checkpoint: Check
     Ok(riem)
 }
 
+/// Same as [`riemann_mixed`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]) instead of the general
+/// engine. This is the stage section 7.1 measured never terminating
+/// within a 180s budget for Kerr under the general engine.
+pub fn riemann_mixed_localized(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext) -> Grid {
+    let n = chart.dim();
+    let mut riem = Grid::new(n, 4);
+    for a in 0..n as u8 {
+        for b in 0..n as u8 {
+            for c in 0..n as u8 {
+                for d in 0..n as u8 {
+                    let mut val = diff(&gamma.get(&[a, b, d]), chart.coord(c)) + Expr::int(-1) * diff(&gamma.get(&[a, b, c]), chart.coord(d));
+                    for e in 0..n as u8 {
+                        val = val + gamma.get(&[a, c, e]) * gamma.get(&[e, b, d]) + Expr::int(-1) * gamma.get(&[a, d, e]) * gamma.get(&[e, b, c]);
+                    }
+                    riem.set(&[a, b, c, d], normalize_localized(&val, ctx));
+                }
+            }
+        }
+    }
+    riem
+}
+
+/// Same as [`lower_index`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]).
+pub fn lower_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g: &ComponentTensor, position: usize, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    let n = chart.dim();
+    let rank = grid.rank();
+    let mut out = Grid::new(n, rank);
+    for_each_index_tuple(n, rank, |idx| {
+        let target = idx[position];
+        let mut sum = Expr::zero();
+        for a in 0..n as u8 {
+            let g_ea = g.get(registry, &[target, a])?;
+            if g_ea.is_zero() {
+                continue;
+            }
+            let mut src = idx.to_vec();
+            src[position] = a;
+            sum = sum + g_ea * grid.get(&src);
+        }
+        out.set(idx, normalize_localized(&sum, ctx));
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// Same as [`lower_first_index`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]).
+pub fn lower_first_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g: &ComponentTensor, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
+    lower_index_localized(registry, chart, grid, g, 0, ctx)
+}
+
+/// Same as [`raise_index`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]).
+pub fn raise_index_localized(chart: &Chart, grid: &Grid, ginv: &Grid, position: usize, ctx: &mut LocalizationContext) -> Grid {
+    let n = chart.dim();
+    let rank = grid.rank();
+    let mut out = Grid::new(n, rank);
+    for_each_index_tuple(n, rank, |idx| {
+        let target = idx[position];
+        let mut sum = Expr::zero();
+        for a in 0..n as u8 {
+            let coeff = ginv.get(&[target, a]);
+            if coeff.is_zero() {
+                continue;
+            }
+            let mut src = idx.to_vec();
+            src[position] = a;
+            sum = sum + coeff * grid.get(&src);
+        }
+        out.set(idx, normalize_localized(&sum, ctx));
+        Ok(())
+    })
+    .expect("closure above never returns Err");
+    out
+}
+
+/// Same as [`kretschmann`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]) -- the fix for
+/// DESIGN-RATIONAL-FORM.md section 7.1.
+pub fn kretschmann_localized(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext) -> Expr {
+    let raised0 = raise_index_localized(chart, riemann_cov, ginv, 0, ctx);
+    let raised1 = raise_index_localized(chart, &raised0, ginv, 1, ctx);
+    let raised2 = raise_index_localized(chart, &raised1, ginv, 2, ctx);
+    let riemann_contra = raise_index_localized(chart, &raised2, ginv, 3, ctx);
+
+    let n = chart.dim();
+    let mut sum = Expr::zero();
+    for_each_index_tuple(n, 4, |idx| {
+        let term = riemann_cov.get(idx) * riemann_contra.get(idx);
+        sum = std::mem::replace(&mut sum, Expr::zero()) + term;
+        Ok(())
+    })
+    .expect("closure above never returns Err");
+    normalize_localized(&sum, ctx)
+}
+
 /// Lowers a `Grid`'s first index through `g`: `T_{e...} = g_{ea} T^a_{...}`.
 /// A thin wrapper around [`lower_index`] at `position` 0 -- every
 /// existing caller of this function keeps its exact current behavior
@@ -871,6 +1052,23 @@ pub fn ricci_tensor_checkpointed(chart: &Chart, riemann_mixed: &Grid, checkpoint
         }
     }
     Ok(ricci)
+}
+
+/// Same as [`ricci_tensor`], but reduces via `ctx`'s localization
+/// generators (see [`christoffel_localized`]).
+pub fn ricci_tensor_localized(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext) -> Grid {
+    let n = chart.dim();
+    let mut ricci = Grid::new(n, 2);
+    for b in 0..n as u8 {
+        for d in 0..n as u8 {
+            let mut sum = Expr::zero();
+            for a in 0..n as u8 {
+                sum = sum + riemann_mixed.get(&[a, b, a, d]);
+            }
+            ricci.set(&[b, d], normalize_localized(&sum, ctx));
+        }
+    }
+    ricci
 }
 
 /// `R = g^bd R_bd` (Ricci scalar).
