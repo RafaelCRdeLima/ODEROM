@@ -870,22 +870,249 @@ da posição. Registrado como o processo real de verificação, não só o
 resultado, porque a comparação inválida quase virou um relatório de
 limitação inexistente.
 
-**Overhead medido, não desprezível — registrado, não otimizado ainda**
-(regra explícita desta fase: parar e avisar antes de otimizar). Três
-medições consecutivas em release, `examples/kerr.od`:
+**Overhead do checkpoint: nenhum. Alegação anterior retratada.**
 
-| Estágio | Antes (Fase anterior) | Depois (com Checkpoint) |
-|---|---|---|
-| `christoffel_localized` | 28ms | ~25-27ms (dentro do ruído) |
-| `riemann_mixed_localized` | 672ms | **~800-870ms** (+20-30%) |
-| `ricci_tensor_localized` | 7.5ms | ~10.6-10.9ms |
+Uma versão anterior desta seção afirmava um custo de +20-30% em
+`riemann_mixed_localized` (672ms -> ~800-870ms) introduzido pelo
+`Checkpoint`. **Essa alegação estava errada e está retratada aqui**, com
+o processo que a derrubou, porque o erro é instrutivo: as duas medições
+comparadas foram tiradas em momentos diferentes, sob carga de máquina
+diferente, e a diferença era artefato de carga, não do código.
 
-`riemann_mixed_localized` é o estágio mais caro e o que mais cresceu.
-Zero fallbacks em ambos os testes de ouro (inalterado). Hipótese não
-verificada (registrada, não investigada): o custo pode vir não da
-chamada de `checkpoint()` em si (barata), mas de `&mut dyn FnMut() ->
-bool` sendo passado por referência através de muito mais quadros de
-pilha na recursão de `expr_to_localized`/`add`/`reciprocal_pow` (agora
-todos retornando `Result`), possivelmente inibindo alguma otimização/
-inlining que existia antes. Não investigado further nesta fase, por
-instrução explícita.
+Medição controlada (mesma máquina, mesma janela de tempo, mesma carga,
+quatro repetições de cada), com um `git worktree` no commit
+pré-Fase-1 (`c3010d3`, que não tem `Checkpoint` nenhum) para servir de
+base real em vez de um número anotado dias antes:
+
+| Variante | `riemann_mixed_localized` |
+|---|---|
+| `c3010d3` — sem `Checkpoint` algum | 1.42-1.50s |
+| Fase 1 — `Checkpoint` + `Result` propagado | 1.37-1.53s |
+| Fase 1 + erro em `Box` | 1.38-1.61s |
+
+As três são indistinguíveis. **Não há overhead do checkpoint a
+explicar** — nem por despacho dinâmico (hipótese A, já falsificada por
+contagem: 320 invocações no total, zero fallbacks), nem por `Result`/
+inlining (hipótese B), nem por tamanho do erro (hipótese C). O número
+absoluto varia muito com a carga da máquina (~672ms numa máquina ociosa,
+~1.4s sob `load average` ~5), e foi exatamente essa variação que a
+comparação original leu como regressão.
+
+**Sobre a hipótese C especificamente** (tamanho do erro), medida antes
+de ser descartada, porque o dado em si é real e vale registrar:
+`size_of::<LocalizedRational>()` = 72 bytes,
+`size_of::<LocalizationBudgetExceeded>()` = 96,
+`size_of::<Result<LocalizedRational, LocalizationBudgetExceeded>>()` =
+96 — ou seja, o `Result` era de fato 33% maior que o valor nu, e
+`Box`ar o erro leva o `Result` de volta a exatos 72 bytes (otimização de
+nicho: `Box` é não-nulo, então o discriminante cabe no nicho). A
+mudança é real e mensurável *no tamanho*; **não é mensurável no tempo**,
+então foi revertida — não se acrescenta `Box` à assinatura pública por
+um ganho que não aparece em nenhuma medição.
+
+**Lição de método, registrada para não se repetir**: comparar um número
+medido agora contra um número anotado numa sessão anterior não é
+medição, é anedota. Qualquer alegação futura de regressão de desempenho
+neste projeto precisa de A/B na mesma janela (`git worktree` no commit
+base, builds dos dois lados, execuções intercaladas) antes de virar
+linha de documento — especialmente numa máquina de trabalho com
+navegador aberto, onde a carga de fundo domina facilmente uma diferença
+de 20%.
+
+**Nota sobre granularidade** (correção de premissa, mantida da versão
+anterior desta seção porque continua válida): pediu-se granularidade
+*grossa* no caminho localizado, e simultaneamente que *todo* fallback
+carregasse orçamento. Como os pontos de saída para o motor geral
+(`add()`, `reciprocal_pow()`) ficam dentro da própria aritmética
+recursiva, a segunda exigência força a primeira a ser fina — não há como
+ter as duas. A escolha feita foi honrar a segunda (correção acima de
+desempenho). Agora que se sabe que o custo é nulo, a tensão é teórica,
+não prática.
+
+### Proposta registrada, explicitamente NÃO implementada: canal de erro fora de banda
+
+Registrada por completude, com a ressalva de que a medição acima
+**removeu a motivação que a originou**: não há overhead para recuperar.
+A ideia: como o caminho localizado puro nunca falha (zero fallbacks
+medidos), propagar `Result` por cada quadro da recursão paga por um erro
+que ocorre zero vezes; guardar o erro no próprio `LocalizationContext`
+(já threaded como `&mut` por toda a recursão) deixaria
+`expr_to_localized`/`add`/`reciprocal_pow` voltarem a retornar valor
+puro.
+
+**Não implementar** — e a razão principal não é mais desempenho: a troca
+substitui uma garantia do compilador (`Result` que *não dá* para
+ignorar) por um invariante mantido à mão (lembrar de consultar o campo
+de erro no topo, e lembrar de curto-circuitar `fallback_to_general_engine`
+depois que ele for setado, senão o componente corrente continua pagando
+o custo que o orçamento existe para cortar). Isso é o oposto da direção
+que esta seção inteira vem seguindo — a Fase 1 unificou a fronteira de
+fallback justamente para que a garantia fosse estrutural em vez de
+depender de alguém lembrar.
+
+Condição de entrada, se algum dia entrar: um teste que **force o
+estouro** e verifique a propagação ponta a ponta (não só que o erro é
+setado, mas que ele chega ao chamador e que nada de trabalho caro roda
+depois de setado). Sem esse teste, a troca não vale ser feita.
+
+**Não integrado ao `oderom-cli` ainda** (o comando `oderom kretschmann
+examples/kerr.od` continua no motor geral, então continua lento/sem
+terminar para Kerr especificamente) — próximo passo: tentar localizar
+sempre que o conjunto de geradores puder ser derivado e passar na
+coprimalidade, caindo no motor geral quando não passar (agnóstico à
+forma da métrica, nunca condicionado a "é diagonal?"/"é Kerr?") — gated
+por um teste diferencial contra o corpus que o motor geral já resolve
+(Schwarzschild, Reissner-Nordström, S², Gödel).
+
+## 8.6 Fase 1: orçamento de execução no caminho localizado (invariante arquitetural)
+
+Antes de o CLI poder rotear por padrão para o motor localizado, ele
+precisa herdar a mesma garantia de `--timeout`/`--max-nodes` que o motor
+geral já tem via `Checkpoint` (`oderom-components::curvature`). Sem
+isso, um fallback que não termina ficaria silenciosamente sem freio.
+
+**Invariante, não conserto pontual**: toda saída da representação
+localizada para o motor geral passa por exatamente **uma** função —
+`fallback_to_general_engine` (`oderom-expr/src/localized.rs`) — e só
+essa função chama `RationalFunction::from_raw`/`.pow()`. Antes desta
+fase havia dois pontos de saída (o ramo de `overflow` de `add()`, e o
+caso de fração aninhada em `reciprocal_pow()`); ambos foram unificados
+para chamar essa única função, que consulta o `Checkpoint` do chamador
+antes de prosseguir. A garantia não depende de alguém lembrar de
+checar em cada novo ponto de saída futuro — depende de nunca existir
+mais de um ponto de saída. Qualquer extensão futura deste motor que
+precise invocar o motor geral **deve** passar por
+`fallback_to_general_engine`, nunca chamar `RationalFunction` diretamente.
+
+`Checkpoint<'a> = &'a mut dyn FnMut() -> bool` é definido em
+`oderom-expr/src/localized.rs`, espelhando (não importando — a
+dependência vai na direção oposta) o tipo já usado em
+`oderom-components::curvature`. Granularidade: grossa no laço externo
+(um `checkpoint()` por componente independente, mesmo padrão de
+`christoffel_checkpointed` e companhia) mais um `checkpoint()`
+obrigatório dentro de `fallback_to_general_engine` — nada dentro da
+aritmética de `Poly` (`add`/`mul`/`exact_div`), que já é barata o
+suficiente (28ms/672ms de ponta a ponta, medido) para que checagem fina
+custasse mais do que protege.
+
+Estouro de orçamento erra com a computação inteira — nunca resultado
+parcial —, com uma nova variante, `ComponentError::LocalizationFallbackBudgetExceeded`
+(`oderom-components/src/error.rs`), carregando o nome do componente
+sendo calculado (`Gamma^0_{{00}}`, `R^0_{{001}}`, etc. -- conceito que
+`oderom-expr` propriamente não tem, por isso a conversão acontece uma
+camada acima, em `curvature::budget_exceeded_error`), o denominador que
+escapou do conjunto de geradores, e o conjunto de geradores em vigor
+naquele momento — exatamente a entrada de que precisa a decisão
+"admitir esse fator como gerador ou não". Verificado disparando de
+verdade, não só existindo: `oderom-expr/src/localized.rs`'s
+`the_execution_budget_actually_fires_at_the_fallback_boundary` (nível do
+motor, controle preciso do ponto de disparo) e
+`oderom-components/tests/kerr.rs`'s
+`christoffel_localized_reports_the_escaped_denominator_when_the_budget_runs_out`
+(nível do pipeline real, métrica sintética `1/(x-1)^3` desenhada para
+forçar o fallback, já que o Kerr real não cai mais nele).
+
+**Independência de ordem, verificada, não suposta**: o conserto do
+`sin(θ)²`-antes-de-`sin(θ)` (recuperação de fator repetido via
+`gcd(p, dp/dvar)`) estabeleceu um invariante testável —
+`oderom-expr/src/localized.rs`'s módulo `order_independence`, exaustivo
+(nunca amostrado) sobre `4! = 24` ordenações de `{Σ, Δ, sin θ, sin²θ}`,
+mais o caso nomeado explicitamente que causou o bug original, mais uma
+terceira checagem específica: um candidato composto (`Σ·Δ`) misturado
+com seus próprios fatores, exaustivo sobre `3! = 6` ordenações. Achado
+ao construir esse terceiro teste (registrado aqui porque uma primeira
+versão dele comparou dois *conjuntos diferentes* — `{Σ·Δ, Σ}` contra
+`{Σ, Δ}` — e leu a diferença como uma suposta falha de independência de
+ordem): não há falha real. Uma vez que cada elemento do *mesmo* conjunto
+tem chance de ser apresentado (o que uma permutação de verdade garante),
+`Σ·Δ` apresentado primeiro ainda recupera `Σ` via `find_repeated_factor`,
+e o `Δ` que aparece depois na mesma ordenação é admitido normalmente
+contra ele — o conjunto final converge para `{Σ, Δ}` independentemente
+da posição. Registrado como o processo real de verificação, não só o
+resultado, porque a comparação inválida quase virou um relatório de
+limitação inexistente.
+
+**Overhead do checkpoint: nenhum. Alegação anterior retratada.**
+
+Uma versão anterior desta seção afirmava um custo de +20-30% em
+`riemann_mixed_localized` (672ms -> ~800-870ms) introduzido pelo
+`Checkpoint`. **Essa alegação estava errada e está retratada aqui**, com
+o processo que a derrubou, porque o erro é instrutivo: as duas medições
+comparadas foram tiradas em momentos diferentes, sob carga de máquina
+diferente, e a diferença era artefato de carga, não do código.
+
+Medição controlada (mesma máquina, mesma janela de tempo, mesma carga,
+quatro repetições de cada), com um `git worktree` no commit
+pré-Fase-1 (`c3010d3`, que não tem `Checkpoint` nenhum) para servir de
+base real em vez de um número anotado dias antes:
+
+| Variante | `riemann_mixed_localized` |
+|---|---|
+| `c3010d3` — sem `Checkpoint` algum | 1.42-1.50s |
+| Fase 1 — `Checkpoint` + `Result` propagado | 1.37-1.53s |
+| Fase 1 + erro em `Box` | 1.38-1.61s |
+
+As três são indistinguíveis. **Não há overhead do checkpoint a
+explicar** — nem por despacho dinâmico (hipótese A, já falsificada por
+contagem: 320 invocações no total, zero fallbacks), nem por `Result`/
+inlining (hipótese B), nem por tamanho do erro (hipótese C). O número
+absoluto varia muito com a carga da máquina (~672ms numa máquina ociosa,
+~1.4s sob `load average` ~5), e foi exatamente essa variação que a
+comparação original leu como regressão.
+
+**Sobre a hipótese C especificamente** (tamanho do erro), medida antes
+de ser descartada, porque o dado em si é real e vale registrar:
+`size_of::<LocalizedRational>()` = 72 bytes,
+`size_of::<LocalizationBudgetExceeded>()` = 96,
+`size_of::<Result<LocalizedRational, LocalizationBudgetExceeded>>()` =
+96 — ou seja, o `Result` era de fato 33% maior que o valor nu, e
+`Box`ar o erro leva o `Result` de volta a exatos 72 bytes (otimização de
+nicho: `Box` é não-nulo, então o discriminante cabe no nicho). A
+mudança é real e mensurável *no tamanho*; **não é mensurável no tempo**,
+então foi revertida — não se acrescenta `Box` à assinatura pública por
+um ganho que não aparece em nenhuma medição.
+
+**Lição de método, registrada para não se repetir**: comparar um número
+medido agora contra um número anotado numa sessão anterior não é
+medição, é anedota. Qualquer alegação futura de regressão de desempenho
+neste projeto precisa de A/B na mesma janela (`git worktree` no commit
+base, builds dos dois lados, execuções intercaladas) antes de virar
+linha de documento — especialmente numa máquina de trabalho com
+navegador aberto, onde a carga de fundo domina facilmente uma diferença
+de 20%.
+
+**Nota sobre granularidade** (correção de premissa, mantida da versão
+anterior desta seção porque continua válida): pediu-se granularidade
+*grossa* no caminho localizado, e simultaneamente que *todo* fallback
+carregasse orçamento. Como os pontos de saída para o motor geral
+(`add()`, `reciprocal_pow()`) ficam dentro da própria aritmética
+recursiva, a segunda exigência força a primeira a ser fina — não há como
+ter as duas. A escolha feita foi honrar a segunda (correção acima de
+desempenho). Agora que se sabe que o custo é nulo, a tensão é teórica,
+não prática.
+
+### Proposta registrada, não implementada: canal de erro fora de banda
+
+A medição acima aponta o conserto exato, se algum dia o overhead
+importar: **o caminho localizado puro nunca falha** (zero fallbacks
+medidos), então propagar `Result` por cada quadro da recursão paga, em
+todo componente, por um erro que ocorre zero vezes. Alternativa:
+guardar o erro no próprio `LocalizationContext` (que já é threaded como
+`&mut` por toda a recursão — custo zero adicional), com
+`fallback_to_general_engine` sendo o único a setá-lo, e só o topo
+(`normalize_localized`) consultando/tomando. Assim
+`expr_to_localized`/`add`/`reciprocal_pow` voltam a retornar valor puro,
+sem `Result`, e o inlining perdido volta.
+
+Detalhe necessário para não quebrar a garantia: uma vez setado o erro,
+`fallback_to_general_engine` precisa curto-circuitar (devolver valor
+trivial imediatamente em vez de chamar o motor geral), senão o
+componente corrente continuaria pagando o custo que o orçamento existe
+para cortar. Com isso, o pior caso após o estouro é terminar o trabalho
+puramente localizado do componente corrente — barato e limitado — e o
+laço externo (`curvature.rs`) já aborta prontamente no componente
+seguinte. A API pública não muda: `normalize_localized` e os
+`*_localized_checkpointed` continuam retornando `Result`; só a recursão
+interna deixa de propagá-lo. **Não implementado** — proposta, aguardando
+decisão, e independente da Fase 2 (não altera nenhuma assinatura que o
+CLI use).
