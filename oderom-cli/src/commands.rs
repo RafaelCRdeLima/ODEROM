@@ -59,19 +59,20 @@ use crate::error::CliError;
 use crate::model::Model;
 use crate::parser::CommandName;
 use oderom_components::curvature::{
-    accel_equations_checkpointed, christoffel_checkpointed, einstein_tensor, einstein_tensor_checkpointed, gauss_bonnet,
-    geodesic_equations_checkpointed, grid_to_component_tensor, kretschmann, kretschmann_checkpointed, lower_first_index,
-    lower_first_index_checkpointed, metric_inverse, raise_index, ricci_scalar, ricci_squared, ricci_squared_checkpointed,
-    ricci_tensor, ricci_tensor_checkpointed, riemann_mixed, riemann_mixed_checkpointed, weyl_squared, weyl_squared_checkpointed,
-    weyl_tensor, weyl_tensor_checkpointed,
+    accel_equations_checkpointed, christoffel_with_engine, einstein_tensor_with_engine, gauss_bonnet_with_engine,
+    geodesic_equations_checkpointed, grid_to_component_tensor, kretschmann_with_engine, localization_generators,
+    lower_first_index_with_engine, metric_inverse, raise_index_with_engine, ricci_scalar_with_engine, ricci_squared_with_engine,
+    ricci_tensor_with_engine, riemann_mixed_with_engine, weyl_squared_with_engine, weyl_tensor_with_engine, Checkpoint, Engine,
 };
+use oderom_components::ComponentError;
+use oderom_expr::LocalizationContext;
 use oderom_components::{
     classify_grid, classify_tensor, render_classes, render_geodesic, render_geodesic_solved, Chart, ComponentClass, ComponentTensor,
     Grid, CHRISTOFFEL_VARIANCE, RICCI_VARIANCE, RIEMANN_COV_VARIANCE, RIEMANN_MIXED_VARIANCE,
 };
 use oderom_core::{HeadId, Perm, Registry, Render, SignedPerm, SlotSig, Target, Variance};
 use oderom_expr::export::{apply_renames, build_rename_map, collect_names, comment_line, MATHEMATICA_RESERVED, SYMPY_RESERVED};
-use oderom_expr::{denominator_degree, normalize, Expr};
+use oderom_expr::{denominator_degree, Expr};
 use smallvec::SmallVec;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::mpsc;
@@ -97,6 +98,7 @@ pub struct Args {
     /// `CliError::Usage`, checked there rather than by adding a second,
     /// command-aware `parse_args` just for this one flag.
     param: Option<String>,
+    engine: EngineChoice,
 }
 
 pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> {
@@ -109,12 +111,21 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
     let mut max_denominator_degree = DEFAULT_MAX_DENOMINATOR_DEGREE;
     let mut timeout = DEFAULT_TIMEOUT;
     let mut param = None;
+    let mut engine = EngineChoice::Auto;
     let mut args = args;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--metric" => metric = Some(args.next().ok_or(CliError::Usage)?),
             "--connection" => connection = Some(args.next().ok_or(CliError::Usage)?),
             "--param" => param = Some(args.next().ok_or(CliError::Usage)?),
+            "--engine" => {
+                engine = match args.next().ok_or(CliError::Usage)?.as_str() {
+                    "auto" => EngineChoice::Auto,
+                    "general" => EngineChoice::General,
+                    "localized" => EngineChoice::Localized,
+                    _ => return Err(CliError::Usage),
+                };
+            }
             "--target" => {
                 // `mathematica`/`sympy` render with the same raw syntax
                 // `export` produces, but WITHOUT `export`'s own
@@ -160,6 +171,7 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
         max_denominator_degree,
         timeout,
         param,
+        engine,
     })
 }
 
@@ -346,12 +358,159 @@ pub fn resolve_choice<'a, V>(
     }
 }
 
+/// Which reduction engine the user asked for (`--engine`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum EngineChoice {
+    /// Try the localized engine whenever this metric's generator set can
+    /// be derived and passes its own square-free/coprimality checks;
+    /// fall back to the general engine when it cannot. **Never gated on
+    /// the metric's shape** -- "is it diagonal?" is explicitly not the
+    /// trigger (Kerr was never a non-diagonality problem, and tying the
+    /// decision to shape would reintroduce exactly the conceptual error
+    /// this line of work undid).
+    #[default]
+    Auto,
+    /// Force `oderom_expr::normalize` -- for debugging and for
+    /// comparing the two engines' output.
+    General,
+    /// Force the localized engine, and **fail** if its generators cannot
+    /// be derived, rather than silently falling back. Exists so a test
+    /// cannot pass through the wrong path without saying so.
+    Localized,
+}
+
+/// Fase 2's routing rule. Returns `Some(ctx)` when the localized engine
+/// should be used. The cost of *trying* is one coprimality pass over a
+/// small generator set, once per metric -- `LocalizationContext::new`
+/// runs each candidate's square-free/coprimality check itself and simply
+/// declines the ones that fail, so "can it be derived" and "does it pass"
+/// are the same question, answered by construction.
+fn choose_engine(
+    registry: &Registry,
+    chart: &Chart,
+    tensor: &ComponentTensor,
+    choice: EngineChoice,
+) -> Result<Option<LocalizationContext>, CliError> {
+    if choice == EngineChoice::General {
+        return Ok(None);
+    }
+    let seeds = match localization_generators(registry, chart, tensor) {
+        Ok(seeds) => seeds,
+        Err(e) => {
+            if choice == EngineChoice::Localized {
+                return Err(e.into());
+            }
+            return Ok(None);
+        }
+    };
+    let ctx = LocalizationContext::new(&seeds);
+    if choice == EngineChoice::Localized && ctx.generator_count() == 0 && !seeds.is_empty() {
+        return Err(CliError::Parse {
+            message: "--engine=localized foi pedido, mas nenhum denominador desta metrica pode ser admitido como gerador de localizacao (nao passaram na checagem de livre-de-quadrados/coprimalidade)".to_string(),
+            position: None,
+        });
+    }
+    Ok(Some(ctx))
+}
+
 pub struct MetricSource {
     pub chart: Chart,
     pub head: HeadId,
     pub tensor: ComponentTensor,
     pub ginv: Grid,
     pub gamma: Grid,
+    /// `Some` when the localized rational-form engine
+    /// (DESIGN-RATIONAL-FORM.md section 8) was selected for this metric
+    /// -- see [`choose_engine`] for the rule. Every downstream stage
+    /// goes through the `self.*` helpers below rather than calling the
+    /// stage functions directly, so no subcommand can accidentally run
+    /// a different engine than the one chosen here (Fase 2's "nada de
+    /// um subcomando localizado e outro não", made structural).
+    pub localization: Option<LocalizationContext>,
+}
+
+impl MetricSource {
+    /// Which engine this metric resolved to -- only for reporting
+    /// ("usando motor localizado"), never for branching behavior.
+    pub fn engine_name(&self) -> &'static str {
+        if self.localization.is_some() {
+            "localizado"
+        } else {
+            "geral"
+        }
+    }
+
+    fn engine(localization: &mut Option<LocalizationContext>) -> Engine<'_> {
+        match localization {
+            Some(ctx) => Engine::Localized(ctx),
+            None => Engine::General,
+        }
+    }
+
+    pub fn riemann_mixed(&mut self, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, gamma, localization, .. } = self;
+        riemann_mixed_with_engine(chart, gamma, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn lower_first_index(&mut self, registry: &Registry, grid: &Grid, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, tensor, localization, .. } = self;
+        lower_first_index_with_engine(registry, chart, grid, tensor, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn raise_index(&mut self, grid: &Grid, position: usize, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, ginv, localization, .. } = self;
+        raise_index_with_engine(chart, grid, ginv, position, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn ricci_tensor(&mut self, riemann_mixed: &Grid, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, localization, .. } = self;
+        ricci_tensor_with_engine(chart, riemann_mixed, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn ricci_scalar(&mut self, ricci: &Grid, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { chart, ginv, localization, .. } = self;
+        ricci_scalar_with_engine(chart, ricci, ginv, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn kretschmann(&mut self, riemann_cov: &Grid, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { chart, ginv, localization, .. } = self;
+        kretschmann_with_engine(chart, riemann_cov, ginv, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn ricci_squared(&mut self, ricci: &Grid, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { chart, ginv, localization, .. } = self;
+        ricci_squared_with_engine(chart, ricci, ginv, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn einstein_tensor(&mut self, registry: &Registry, ricci: &Grid, scalar: &Expr, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, tensor, localization, .. } = self;
+        einstein_tensor_with_engine(registry, chart, tensor, ricci, scalar, &mut Self::engine(localization), checkpoint)
+    }
+
+    pub fn weyl_tensor(&mut self, registry: &Registry, riem_cov: &Grid, ricci: &Grid, scalar: &Expr, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+        let Self { chart, tensor, localization, .. } = self;
+        weyl_tensor_with_engine(registry, chart, tensor, riem_cov, ricci, scalar, &mut Self::engine(localization), checkpoint)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn weyl_squared(&mut self, registry: &Registry, riem_cov: &Grid, ricci: &Grid, scalar: &Expr, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { chart, tensor, ginv, localization, .. } = self;
+        weyl_squared_with_engine(registry, chart, tensor, riem_cov, ricci, scalar, ginv, &mut Self::engine(localization), checkpoint)
+    }
+
+    /// Reduce an arbitrary expression through this metric's chosen
+    /// engine -- for the one place `oderom-cli` reimplements a stage's
+    /// accumulation loop itself (`kretschmann_cmd`, for per-term
+    /// progress reporting).
+    pub fn reduce(&mut self, e: &Expr, component: &'static str, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { localization, .. } = self;
+        Self::engine(localization).reduce(e, || component.to_string(), checkpoint)
+    }
+
+    pub fn gauss_bonnet(&mut self, kretschmann: &Expr, ricci_squared: &Expr, ricci_scalar: &Expr, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        let Self { localization, .. } = self;
+        gauss_bonnet_with_engine(kretschmann, ricci_squared, ricci_scalar, &mut Self::engine(localization), checkpoint)
+    }
 }
 
 pub enum GammaSource {
@@ -371,6 +530,21 @@ pub fn resolve_gamma_source(
     max_nodes: usize,
     ctx: &ExecutionContext,
 ) -> Result<GammaSource, CliError> {
+    resolve_gamma_source_with_engine(model, connection, metric, max_nodes, ctx, EngineChoice::default())
+}
+
+/// Same as [`resolve_gamma_source`], with the engine choice explicit --
+/// what `oderom-cli`'s own subcommands use so `--engine` reaches the
+/// Christoffel build. The plain form above (used by `oderom-session`)
+/// keeps `EngineChoice::default()`, i.e. `Auto`.
+pub fn resolve_gamma_source_with_engine(
+    model: &Model,
+    connection: Option<&str>,
+    metric: Option<&str>,
+    max_nodes: usize,
+    ctx: &ExecutionContext,
+    engine_choice: EngineChoice,
+) -> Result<GammaSource, CliError> {
     if let Some(name) = connection {
         let (chart_name, gamma) = model
             .connections
@@ -383,7 +557,7 @@ pub fn resolve_gamma_source(
         let metric_owned = metric.map(str::to_string);
         if let Some((resolved_name, (chart_name, head, tensor))) = resolve_choice(&model.metrics, &metric_owned, "metric")? {
             ctx.record_use(resolved_name);
-            return build_from_metric(model, chart_name, *head, tensor, max_nodes, ctx);
+            return build_from_metric(model, chart_name, *head, tensor, max_nodes, ctx, engine_choice);
         }
     }
     if let Some((resolved_name, (chart_name, gamma))) = resolve_choice(&model.connections, &None, "connection")? {
@@ -400,15 +574,29 @@ fn build_from_metric(
     tensor: &ComponentTensor,
     max_nodes: usize,
     ctx: &ExecutionContext,
+    engine_choice: EngineChoice,
 ) -> Result<GammaSource, CliError> {
     ctx.record_use(chart_name);
     let chart = model.charts.get(chart_name).expect("chart name stored by parse_metric_decl always exists").clone();
     ctx.set("inverting the metric");
     let ginv = metric_inverse(&model.registry, &chart, tensor)?;
+    let mut localization = choose_engine(&model.registry, &chart, tensor, engine_choice)?;
     ctx.set("computing Christoffel symbols");
-    let gamma = christoffel_checkpointed(&model.registry, &chart, tensor, &ginv, &mut || ctx.is_cancelled())?;
+    let gamma = christoffel_with_engine(
+        &model.registry,
+        &chart,
+        tensor,
+        &ginv,
+        &mut MetricSource::engine(&mut localization),
+        &mut || ctx.is_cancelled(),
+    )?;
     check_grid_budget(&gamma, "christoffel", max_nodes)?;
-    Ok(GammaSource::FromMetric(MetricSource { chart, head, tensor: tensor.clone(), ginv, gamma }))
+    // Which engine actually ran, on stderr (never stdout, which carries
+    // the result and gets redirected/piped): the user needs this most
+    // exactly when performance surprises them, and guessing from timing
+    // alone is what made this whole line of work hard to reason about.
+    eprintln!("motor: {}", if localization.is_some() { "localizado" } else { "geral" });
+    Ok(GammaSource::FromMetric(MetricSource { chart, head, tensor: tensor.clone(), ginv, gamma, localization }))
 }
 
 fn build_from_connection(model: &Model, chart_name: &str, gamma: &Grid, ctx: &ExecutionContext) -> GammaSource {
@@ -511,7 +699,7 @@ pub fn christoffel_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
         let (chart, gamma) = match &source {
             GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
             GammaSource::FromConnection { chart, gamma } => (chart, gamma),
@@ -527,14 +715,14 @@ pub fn riemann_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let mut model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
         let text = match source {
-            GammaSource::FromMetric(m) => {
+            GammaSource::FromMetric(mut m) => {
                 ctx.set("computing the Riemann tensor (mixed)");
-                let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+                let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
                 check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
                 ctx.set("lowering the first index");
-                let riem_cov = lower_first_index(&model.registry, &m.chart, &riem_mixed, &m.tensor)?;
+                let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
                 check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
                 let riemann_head = declare_internal_head(&mut model.registry, m.head, 4, "__Riemann")?;
                 let tensor = grid_to_component_tensor(&model.registry, riemann_head, &riem_cov);
@@ -543,7 +731,7 @@ pub fn riemann_cmd(args: Args) -> Result<(), CliError> {
             }
             GammaSource::FromConnection { chart, gamma } => {
                 ctx.set("computing the Riemann tensor (mixed)");
-                let riem_mixed = riemann_mixed(&chart, &gamma);
+                let riem_mixed = riemann_mixed_with_engine(&chart, &gamma, &mut Engine::General, &mut || ctx.is_cancelled())?;
                 check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
                 render_classes("R", classify_grid(&riem_mixed), &chart, &RIEMANN_MIXED_VARIANCE, args.target, args.max_lines)
             }
@@ -558,14 +746,14 @@ pub fn ricci_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let mut model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
         let text = match source {
-            GammaSource::FromMetric(m) => {
+            GammaSource::FromMetric(mut m) => {
                 ctx.set("computing the Riemann tensor (mixed)");
-                let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+                let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
                 check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
                 ctx.set("contracting to the Ricci tensor");
-                let ricci = ricci_tensor(&m.chart, &riem_mixed);
+                let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
                 check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
                 let ricci_head = declare_internal_head(&mut model.registry, m.head, 2, "__Ricci")?;
                 let tensor = grid_to_component_tensor(&model.registry, ricci_head, &ricci);
@@ -574,10 +762,10 @@ pub fn ricci_cmd(args: Args) -> Result<(), CliError> {
             }
             GammaSource::FromConnection { chart, gamma } => {
                 ctx.set("computing the Riemann tensor (mixed)");
-                let riem_mixed = riemann_mixed(&chart, &gamma);
+                let riem_mixed = riemann_mixed_with_engine(&chart, &gamma, &mut Engine::General, &mut || ctx.is_cancelled())?;
                 check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
                 ctx.set("contracting to the Ricci tensor");
-                let ricci = ricci_tensor(&chart, &riem_mixed);
+                let ricci = ricci_tensor_with_engine(&chart, &riem_mixed, &mut Engine::General, &mut || ctx.is_cancelled())?;
                 check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
                 render_classes("Ricci", classify_grid(&ricci), &chart, &RICCI_VARIANCE, args.target, args.max_lines)
             }
@@ -599,18 +787,18 @@ pub fn einstein_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let mut model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "einstein")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "einstein")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting to the Ricci scalar");
-        let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
+        let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
         ctx.set("assembling the Einstein tensor");
-        let einstein = einstein_tensor(&model.registry, &m.chart, &m.tensor, &ricci, &scalar);
+        let einstein = m.einstein_tensor(&model.registry, &ricci, &scalar, &mut || ctx.is_cancelled())?;
         check_grid_budget(&einstein, "einstein_tensor", args.max_nodes)?;
         let einstein_head = declare_internal_head(&mut model.registry, m.head, 2, "__Einstein")?;
         let tensor = grid_to_component_tensor(&model.registry, einstein_head, &einstein);
@@ -627,16 +815,16 @@ pub fn riccisquare_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "riccisquare")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "riccisquare")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting Ricci with itself");
-        let r = ricci_squared(&m.chart, &ricci, &m.ginv);
+        let r = m.ricci_squared(&ricci, &mut || ctx.is_cancelled())?;
         Ok(r.render(args.target))
     })?;
     println!("{text}");
@@ -651,25 +839,25 @@ pub fn gaussbonnet_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "gaussbonnet")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "gaussbonnet")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("lowering the first index");
-        let riem_cov = lower_first_index(&model.registry, &m.chart, &riem_mixed, &m.tensor)?;
+        let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting to the Ricci scalar");
-        let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
+        let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
         ctx.set("computing the Kretschmann scalar");
-        let k = kretschmann(&m.chart, &riem_cov, &m.ginv);
+        let k = m.kretschmann(&riem_cov, &mut || ctx.is_cancelled())?;
         ctx.set("contracting Ricci with itself");
-        let rsq = ricci_squared(&m.chart, &ricci, &m.ginv);
+        let rsq = m.ricci_squared(&ricci, &mut || ctx.is_cancelled())?;
         ctx.set("assembling the Gauss-Bonnet density");
-        Ok(gauss_bonnet(&k, &rsq, &scalar).render(args.target))
+        Ok(m.gauss_bonnet(&k, &rsq, &scalar, &mut || ctx.is_cancelled())?.render(args.target))
     })?;
     println!("{text}");
     Ok(())
@@ -679,16 +867,16 @@ pub fn scalar_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "scalar")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "scalar")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting to the Ricci scalar");
-        let r = ricci_scalar(&m.chart, &ricci, &m.ginv);
+        let r = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
         Ok(r.render(args.target))
     })?;
     println!("{text}");
@@ -706,28 +894,28 @@ pub fn kretschmann_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "kretschmann")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "kretschmann")?;
 
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
 
         ctx.set("lowering the first index");
-        let riem_cov = lower_first_index(&model.registry, &m.chart, &riem_mixed, &m.tensor)?;
+        let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
 
         ctx.set("raising indices (1/4)");
-        let raised0 = raise_index(&m.chart, &riem_cov, &m.ginv, 0);
+        let raised0 = m.raise_index(&riem_cov, 0, &mut || ctx.is_cancelled())?;
         check_grid_budget(&raised0, "raise_index(0)", args.max_nodes)?;
         ctx.set("raising indices (2/4)");
-        let raised1 = raise_index(&m.chart, &raised0, &m.ginv, 1);
+        let raised1 = m.raise_index(&raised0, 1, &mut || ctx.is_cancelled())?;
         check_grid_budget(&raised1, "raise_index(1)", args.max_nodes)?;
         ctx.set("raising indices (3/4)");
-        let raised2 = raise_index(&m.chart, &raised1, &m.ginv, 2);
+        let raised2 = m.raise_index(&raised1, 2, &mut || ctx.is_cancelled())?;
         check_grid_budget(&raised2, "raise_index(2)", args.max_nodes)?;
         ctx.set("raising indices (4/4)");
-        let riemann_contra = raise_index(&m.chart, &raised2, &m.ginv, 3);
+        let riemann_contra = m.raise_index(&raised2, 3, &mut || ctx.is_cancelled())?;
         check_grid_budget(&riemann_contra, "raise_index(3)", args.max_nodes)?;
 
         let dim = m.chart.dim();
@@ -735,7 +923,31 @@ pub fn kretschmann_cmd(args: Args) -> Result<(), CliError> {
         let mut sum = Expr::zero();
         for (index, idx) in each_index_tuple(dim, 4).enumerate() {
             let term = riem_cov.get(&idx) * riemann_contra.get(&idx);
-            sum = normalize(&(sum + term));
+            // Through the *chosen* engine, not `normalize` directly:
+            // this loop is `kretschmann_with_engine`'s own accumulation
+            // reimplemented here for per-term progress reporting and
+            // budget checks, and reducing 256 Kerr-shaped terms with the
+            // general engine is exactly the cost the localized engine
+            // exists to avoid -- leaving this one call unrouted made the
+            // whole rest of the wiring pointless (measured: everything
+            // upstream finished in 1.4s, then this loop alone ran past
+            // 100s at term 17/256).
+            sum = sum + term;
+            // Reduce on the progress stride, not every term. Reducing
+            // per term forces an Expr <-> localized-form round trip
+            // 256 times, and each trip re-parses the (expanded)
+            // Sigma^k denominator the previous one just emitted --
+            // measured: per-term reduction reached only term 65/256 in
+            // 30s, while `kretschmann_with_engine`'s own accumulation
+            // (raw sum, one reduction at the end) completes the whole
+            // scalar in seconds. Striding keeps the guardrail's
+            // cadence -- which was already per-stride for
+            // denominator_degree, for the same "not a cheap check"
+            // reason documented below -- without paying that trip
+            // 256 times.
+            if index % PROGRESS_STRIDE == 0 || index + 1 == total_terms {
+                sum = m.reduce(&sum, "kretschmann sum", &mut || ctx.is_cancelled())?;
+            }
             let nodes = sum.node_count();
             if nodes > args.max_nodes {
                 return Err(CliError::NodeLimitExceeded {
@@ -785,21 +997,21 @@ pub fn weyl_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let mut model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "weyl")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "weyl")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("lowering the first index");
-        let riem_cov = lower_first_index(&model.registry, &m.chart, &riem_mixed, &m.tensor)?;
+        let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting to the Ricci scalar");
-        let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
+        let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
         ctx.set("assembling the Weyl tensor");
-        let weyl = weyl_tensor(&model.registry, &m.chart, &m.tensor, &riem_cov, &ricci, &scalar)?;
+        let weyl = m.weyl_tensor(&model.registry, &riem_cov, &ricci, &scalar, &mut || ctx.is_cancelled())?;
         check_grid_budget(&weyl, "weyl_tensor", args.max_nodes)?;
         let weyl_head = declare_internal_head(&mut model.registry, m.head, 4, "__Weyl")?;
         let tensor = grid_to_component_tensor(&model.registry, weyl_head, &weyl);
@@ -818,21 +1030,21 @@ pub fn weylsquare_cmd(args: Args) -> Result<(), CliError> {
     let timeout = args.timeout;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-        let m = require_metric(source, "weylsquare")?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+        let mut m = require_metric(source, "weylsquare")?;
         ctx.set("computing the Riemann tensor (mixed)");
-        let riem_mixed = riemann_mixed(&m.chart, &m.gamma);
+        let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
         ctx.set("lowering the first index");
-        let riem_cov = lower_first_index(&model.registry, &m.chart, &riem_mixed, &m.tensor)?;
+        let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
         ctx.set("contracting to the Ricci tensor");
-        let ricci = ricci_tensor(&m.chart, &riem_mixed);
+        let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
         check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
         ctx.set("contracting to the Ricci scalar");
-        let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
+        let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
         ctx.set("assembling and contracting the Weyl tensor");
-        let wsq = weyl_squared(&model.registry, &m.chart, &m.tensor, &riem_cov, &ricci, &scalar, &m.ginv)?;
+        let wsq = m.weyl_squared(&model.registry, &riem_cov, &ricci, &scalar, &mut || ctx.is_cancelled())?;
         Ok(wsq.render(args.target))
     })?;
     println!("{text}");
@@ -850,7 +1062,7 @@ pub fn geodesic_cmd(args: Args) -> Result<(), CliError> {
     let param = args.param.clone().ok_or(CliError::Usage)?;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
         let (chart, gamma) = match &source {
             GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
             GammaSource::FromConnection { chart, gamma } => (chart, gamma),
@@ -891,7 +1103,7 @@ pub fn accel_cmd(args: Args) -> Result<(), CliError> {
     let param = args.param.clone().ok_or(CliError::Usage)?;
     let text = run_with_budget(timeout, move |ctx| {
         let model = load_model(&args)?;
-        let source = resolve_gamma_source(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+        let source = resolve_gamma_source_with_engine(&model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
         let (chart, gamma) = match &source {
             GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
             GammaSource::FromConnection { chart, gamma } => (chart, gamma),
@@ -996,7 +1208,7 @@ pub fn export_cmd(export_target: String, command_word: String, args: Args) -> Re
 fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx: &ExecutionContext) -> Result<ExportSource, CliError> {
     match name {
         CommandName::Christoffel => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
             let (chart, gamma) = match &source {
                 GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
                 GammaSource::FromConnection { chart, gamma } => (chart, gamma),
@@ -1004,12 +1216,12 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
             Ok(ExportSource::Classes { label: "Gamma", classes: classify_grid(gamma), chart: chart.clone(), variance: CHRISTOFFEL_VARIANCE.to_vec() })
         }
         CommandName::Riemann => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
             match source {
-                GammaSource::FromMetric(m) => {
-                    let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+                GammaSource::FromMetric(mut m) => {
+                    let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
                     check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-                    let riem_cov = lower_first_index_checkpointed(&model.registry, &m.chart, &riem_mixed, &m.tensor, &mut || ctx.is_cancelled())?;
+                    let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
                     check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
                     let riemann_head = declare_internal_head(&mut model.registry, m.head, 4, "__Riemann")?;
                     let tensor = grid_to_component_tensor(&model.registry, riemann_head, &riem_cov);
@@ -1017,19 +1229,19 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
                     Ok(ExportSource::Classes { label: "R", classes, chart: m.chart, variance: RIEMANN_COV_VARIANCE.to_vec() })
                 }
                 GammaSource::FromConnection { chart, gamma } => {
-                    let riem_mixed = riemann_mixed_checkpointed(&chart, &gamma, &mut || ctx.is_cancelled())?;
+                    let riem_mixed = riemann_mixed_with_engine(&chart, &gamma, &mut Engine::General, &mut || ctx.is_cancelled())?;
                     check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
                     Ok(ExportSource::Classes { label: "R", classes: classify_grid(&riem_mixed), chart, variance: RIEMANN_MIXED_VARIANCE.to_vec() })
                 }
             }
         }
         CommandName::Ricci => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
             match source {
-                GammaSource::FromMetric(m) => {
-                    let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+                GammaSource::FromMetric(mut m) => {
+                    let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
                     check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-                    let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+                    let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
                     check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
                     let ricci_head = declare_internal_head(&mut model.registry, m.head, 2, "__Ricci")?;
                     let tensor = grid_to_component_tensor(&model.registry, ricci_head, &ricci);
@@ -1037,43 +1249,43 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
                     Ok(ExportSource::Classes { label: "Ricci", classes, chart: m.chart, variance: RICCI_VARIANCE.to_vec() })
                 }
                 GammaSource::FromConnection { chart, gamma } => {
-                    let riem_mixed = riemann_mixed_checkpointed(&chart, &gamma, &mut || ctx.is_cancelled())?;
+                    let riem_mixed = riemann_mixed_with_engine(&chart, &gamma, &mut Engine::General, &mut || ctx.is_cancelled())?;
                     check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-                    let ricci = ricci_tensor_checkpointed(&chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+                    let ricci = ricci_tensor_with_engine(&chart, &riem_mixed, &mut Engine::General, &mut || ctx.is_cancelled())?;
                     check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
                     Ok(ExportSource::Classes { label: "Ricci", classes: classify_grid(&ricci), chart, variance: RICCI_VARIANCE.to_vec() })
                 }
             }
         }
         CommandName::Scalar => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "scalar")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "scalar")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let r = ricci_scalar(&m.chart, &ricci, &m.ginv);
+            let r = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
             Ok(ExportSource::Scalar(r))
         }
         CommandName::Kretschmann => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "kretschmann")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "kretschmann")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let riem_cov = lower_first_index_checkpointed(&model.registry, &m.chart, &riem_mixed, &m.tensor, &mut || ctx.is_cancelled())?;
+            let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
-            let k = kretschmann_checkpointed(&m.chart, &riem_cov, &m.ginv, &mut || ctx.is_cancelled())?;
+            let k = m.kretschmann(&riem_cov, &mut || ctx.is_cancelled())?;
             Ok(ExportSource::Scalar(k))
         }
         CommandName::Einstein => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "einstein")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "einstein")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
-            let einstein = einstein_tensor_checkpointed(&model.registry, &m.chart, &m.tensor, &ricci, &scalar, &mut || ctx.is_cancelled())?;
+            let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
+            let einstein = m.einstein_tensor(&model.registry, &ricci, &scalar, &mut || ctx.is_cancelled())?;
             check_grid_budget(&einstein, "einstein_tensor", args.max_nodes)?;
             let einstein_head = declare_internal_head(&mut model.registry, m.head, 2, "__Einstein")?;
             let tensor = grid_to_component_tensor(&model.registry, einstein_head, &einstein);
@@ -1081,40 +1293,40 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
             Ok(ExportSource::Classes { label: "G", classes, chart: m.chart, variance: RICCI_VARIANCE.to_vec() })
         }
         CommandName::RicciSquared => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "riccisquare")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "riccisquare")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let rsq = ricci_squared_checkpointed(&m.chart, &ricci, &m.ginv, &mut || ctx.is_cancelled())?;
+            let rsq = m.ricci_squared(&ricci, &mut || ctx.is_cancelled())?;
             Ok(ExportSource::Scalar(rsq))
         }
         CommandName::GaussBonnet => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "gaussbonnet")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "gaussbonnet")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let riem_cov = lower_first_index_checkpointed(&model.registry, &m.chart, &riem_mixed, &m.tensor, &mut || ctx.is_cancelled())?;
+            let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
-            let k = kretschmann_checkpointed(&m.chart, &riem_cov, &m.ginv, &mut || ctx.is_cancelled())?;
-            let rsq = ricci_squared_checkpointed(&m.chart, &ricci, &m.ginv, &mut || ctx.is_cancelled())?;
-            Ok(ExportSource::Scalar(gauss_bonnet(&k, &rsq, &scalar)))
+            let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
+            let k = m.kretschmann(&riem_cov, &mut || ctx.is_cancelled())?;
+            let rsq = m.ricci_squared(&ricci, &mut || ctx.is_cancelled())?;
+            Ok(ExportSource::Scalar(m.gauss_bonnet(&k, &rsq, &scalar, &mut || ctx.is_cancelled())?))
         }
         CommandName::Weyl => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "weyl")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "weyl")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let riem_cov = lower_first_index_checkpointed(&model.registry, &m.chart, &riem_mixed, &m.tensor, &mut || ctx.is_cancelled())?;
+            let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
-            let weyl = weyl_tensor_checkpointed(&model.registry, &m.chart, &m.tensor, &riem_cov, &ricci, &scalar, &mut || ctx.is_cancelled())?;
+            let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
+            let weyl = m.weyl_tensor(&model.registry, &riem_cov, &ricci, &scalar, &mut || ctx.is_cancelled())?;
             check_grid_budget(&weyl, "weyl_tensor", args.max_nodes)?;
             let weyl_head = declare_internal_head(&mut model.registry, m.head, 4, "__Weyl")?;
             let tensor = grid_to_component_tensor(&model.registry, weyl_head, &weyl);
@@ -1122,21 +1334,21 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
             Ok(ExportSource::Classes { label: "C", classes, chart: m.chart, variance: RIEMANN_COV_VARIANCE.to_vec() })
         }
         CommandName::WeylSquared => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
-            let m = require_metric(source, "weylsquare")?;
-            let riem_mixed = riemann_mixed_checkpointed(&m.chart, &m.gamma, &mut || ctx.is_cancelled())?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
+            let mut m = require_metric(source, "weylsquare")?;
+            let riem_mixed = m.riemann_mixed(&mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_mixed, "riemann_mixed", args.max_nodes)?;
-            let riem_cov = lower_first_index_checkpointed(&model.registry, &m.chart, &riem_mixed, &m.tensor, &mut || ctx.is_cancelled())?;
+            let riem_cov = m.lower_first_index(&model.registry, &riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&riem_cov, "lower_first_index", args.max_nodes)?;
-            let ricci = ricci_tensor_checkpointed(&m.chart, &riem_mixed, &mut || ctx.is_cancelled())?;
+            let ricci = m.ricci_tensor(&riem_mixed, &mut || ctx.is_cancelled())?;
             check_grid_budget(&ricci, "ricci_tensor", args.max_nodes)?;
-            let scalar = ricci_scalar(&m.chart, &ricci, &m.ginv);
+            let scalar = m.ricci_scalar(&ricci, &mut || ctx.is_cancelled())?;
             let wsq =
-                weyl_squared_checkpointed(&model.registry, &m.chart, &m.tensor, &riem_cov, &ricci, &scalar, &m.ginv, &mut || ctx.is_cancelled())?;
+                m.weyl_squared(&model.registry, &riem_cov, &ricci, &scalar, &mut || ctx.is_cancelled())?;
             Ok(ExportSource::Scalar(wsq))
         }
         CommandName::Geodesic => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
             let (chart, gamma) = match &source {
                 GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
                 GammaSource::FromConnection { chart, gamma } => (chart, gamma),
@@ -1148,7 +1360,7 @@ fn compute_export_source(name: CommandName, model: &mut Model, args: &Args, ctx:
             Ok(ExportSource::Equations { param, equations })
         }
         CommandName::Accel => {
-            let source = resolve_gamma_source(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx)?;
+            let source = resolve_gamma_source_with_engine(model, args.connection.as_deref(), args.metric.as_deref(), args.max_nodes, ctx, args.engine)?;
             let (chart, gamma) = match &source {
                 GammaSource::FromMetric(m) => (&m.chart, &m.gamma),
                 GammaSource::FromConnection { chart, gamma } => (chart, gamma),
