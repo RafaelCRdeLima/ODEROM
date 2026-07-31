@@ -46,12 +46,38 @@ pub struct TensorHead {
     pub slots: SmallVec<[SlotSig; 4]>,
     pub symmetry_generators: Vec<SignedPerm>,
     pub symmetry: Bsgs,
+    /// `Some((base, k))` when this head is `k` covariant derivatives of
+    /// `base` -- what `T[a,b;c]` (standard GR notation: comma for
+    /// partial, semicolon for covariant) declares. `None` for an
+    /// ordinary declared head.
+    ///
+    /// The derivative slots are the last `k`, and the base head's
+    /// symmetry generators are extended to fix them: `∇_c T_ab` inherits
+    /// whatever symmetry `T_ab` has between `a` and `b`, and has none at
+    /// all involving `c`. Nothing relates two derivative slots to each
+    /// other either, and that absence is load-bearing rather than an
+    /// omission: `∇_a ∇_b` and `∇_b ∇_a` genuinely differ, and their
+    /// difference is exactly the Riemann tensor. Declaring them
+    /// symmetric would silently assert flatness.
+    pub derivative_of: Option<(HeadId, u8)>,
 }
 
 impl TensorHead {
     /// Number of slots.
     pub fn arity(&self) -> usize {
         self.slots.len()
+    }
+
+    /// How many of this head's trailing slots are covariant-derivative
+    /// indices (0 for an ordinary head).
+    pub fn derivative_count(&self) -> usize {
+        self.derivative_of.map_or(0, |(_, k)| k as usize)
+    }
+
+    /// The head this one differentiates, or itself when it is not a
+    /// derivative.
+    pub fn base_head(&self) -> HeadId {
+        self.derivative_of.map_or(self.id, |(base, _)| base)
     }
 
     pub(crate) fn new(
@@ -61,6 +87,6 @@ impl TensorHead {
         symmetry_generators: Vec<SignedPerm>,
     ) -> Self {
         let symmetry = Bsgs::from_generators(slots.len(), &symmetry_generators);
-        TensorHead { id, name, slots, symmetry_generators, symmetry }
+        TensorHead { id, name, slots, symmetry_generators, symmetry, derivative_of: None }
     }
 }

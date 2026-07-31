@@ -84,7 +84,7 @@ fn run_canon(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
 
     let prelude_src = std::fs::read_to_string(&prelude_path)
         .map_err(|source| CliError::Io { path: prelude_path.clone(), source })?;
-    let model = parser::parse_model(&prelude_src)?;
+    let mut model = parser::parse_model(&prelude_src)?;
 
     // `canon` computes the canonical form of the contraction graph itself
     // (Marco 1.3); it does not run the separate geometric type judgment
@@ -93,7 +93,7 @@ fn run_canon(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
     // very examples Marco 1's acceptance table exercises, since `R` and
     // `g` are declared fully covariant by default (see `prelude.od`) and
     // Marco 1 has no index raising/lowering to reconcile that with.
-    let monomial = parser::parse_monomial(&expr, &model.registry)?;
+    let monomial = parser::parse_monomial(&expr, &mut model.registry)?;
 
     let start = Instant::now();
     let result = oderom_canon::canonicalize(&monomial, &model.registry)?;
@@ -191,9 +191,9 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
 
     let prelude_src =
         std::fs::read_to_string(&prelude_path).map_err(|source| CliError::Io { path: prelude_path.clone(), source })?;
-    let model = parser::parse_model(&prelude_src)?;
+    let mut model = parser::parse_model(&prelude_src)?;
 
-    let mut terms = parser::parse_polynomial(&expr, &model.registry)?;
+    let mut terms = parser::parse_polynomial(&expr, &mut model.registry)?;
 
     // Metric elimination runs *before* the e-graph, on each term's
     // contraction graph: it changes the term's factor count, which is

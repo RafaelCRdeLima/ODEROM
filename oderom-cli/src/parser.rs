@@ -1101,6 +1101,10 @@ fn totally_symmetric_generators(n: usize) -> Vec<SignedPerm> {
 struct ParsedFactor {
     head_name: String,
     indices: Vec<String>,
+    /// How many of `indices`'s trailing entries came after a `;`
+    /// -- covariant-derivative indices, in the standard GR spelling
+    /// (`T[a,b;c]` is the tensor `nabla_c T_ab`).
+    derivatives: u8,
 }
 
 /// Parses and resolves a single tensor monomial against `registry`:
@@ -1108,7 +1112,7 @@ struct ParsedFactor {
 /// An index name appearing exactly twice across the whole monomial
 /// becomes a contraction; exactly once, a free index; any other count is
 /// a parse error.
-pub fn parse_monomial(src: &str, registry: &Registry) -> Result<Monomial, CliError> {
+pub fn parse_monomial(src: &str, registry: &mut Registry) -> Result<Monomial, CliError> {
     let mut toks = TokStream::new(src)?;
 
     let mut coeff_sign = 1i64;
@@ -1151,29 +1155,55 @@ fn parse_factor(toks: &mut TokStream) -> Result<ParsedFactor, CliError> {
     let head_name = toks.ident()?;
     toks.expect_sym('[')?;
     let mut indices = Vec::new();
+    // Everything after the first `;` is a covariant-derivative index --
+    // the standard GR spelling (comma for partial, semicolon for
+    // covariant), so `T[a,b;c]` reads as `nabla_c T_ab`. Kept inside the
+    // existing `HEAD[...]` bracket grammar rather than introducing a
+    // prefix operator, so nothing else about a factor changes.
+    let mut derivatives: u8 = 0;
+    let mut seen_semicolon = false;
     loop {
         indices.push(toks.ident()?);
-        if *toks.peek() == Tok::Sym(',') {
-            toks.advance();
-        } else {
-            break;
+        if seen_semicolon {
+            derivatives += 1;
         }
+        match toks.peek() {
+            Tok::Sym(',') => {
+                toks.advance();
+            }
+            Tok::Sym(';') => {
+                if seen_semicolon {
+                    return Err(toks.error("only one `;` may appear in an index list; write every derivative index after it (`T[a,b;c,d]`)"));
+                }
+                seen_semicolon = true;
+                toks.advance();
+            }
+            _ => break,
+        };
+    }
+    if seen_semicolon && derivatives == 0 {
+        return Err(toks.error("`;` must be followed by at least one derivative index"));
     }
     toks.expect_sym(']')?;
-    Ok(ParsedFactor { head_name, indices })
+    Ok(ParsedFactor { head_name, indices, derivatives })
 }
 
 fn build_monomial(
     coeff: Scalar,
     parsed: Vec<ParsedFactor>,
-    registry: &Registry,
+    registry: &mut Registry,
 ) -> Result<Monomial, CliError> {
     let mut factors: SmallVec<[Factor; 4]> = SmallVec::new();
     let mut occurrences: HashMap<String, Vec<SlotId>> = HashMap::new();
     let mut head_ids: Vec<HeadId> = Vec::new();
 
     for (fi, pf) in parsed.iter().enumerate() {
-        let head = registry.lookup_head(&pf.head_name)?;
+        let base = registry.lookup_head(&pf.head_name)?;
+        // `T[a,b;c]` is a factor of the *derivative* head, synthesized on
+        // first use (see `Registry::derivative_head`) so that the same
+        // derivative written in two places is the same head and the two
+        // are comparable.
+        let head = registry.derivative_head(base, pf.derivatives)?;
         let arity = registry.head(head).arity();
         if pf.indices.len() != arity {
             return Err(CliError::Parse {
@@ -1239,7 +1269,7 @@ fn build_monomial(
 ///
 /// Empty input, or a trailing operator with nothing after it, is a
 /// parse error rather than a silently-dropped term.
-pub fn parse_polynomial(src: &str, registry: &Registry) -> Result<Vec<Monomial>, CliError> {
+pub fn parse_polynomial(src: &str, registry: &mut Registry) -> Result<Vec<Monomial>, CliError> {
     let mut terms = Vec::new();
     let mut current = String::new();
     for (i, ch) in src.char_indices() {
@@ -1330,10 +1360,19 @@ pub fn format_monomial(m: &Monomial, registry: &Registry) -> String {
     }
     for (fi, factor) in m.factors().iter().enumerate() {
         let head = registry.head(factor.head);
-        out.push_str(&head.name);
+        // A derivative head is stored under the synthesized name
+        // `base;k`; it renders as the base name with its derivative
+        // indices after a `;`, which is both the standard GR spelling
+        // and exactly what `parse_factor` accepts -- so this output
+        // parses straight back in.
+        let derivatives = head.derivative_count();
+        let base_arity = head.arity() - derivatives;
+        out.push_str(head.name.split(';').next().unwrap_or(&head.name));
         out.push('[');
         for slot in 0..head.arity() {
-            if slot > 0 {
+            if slot == base_arity && derivatives > 0 {
+                out.push(';');
+            } else if slot > 0 {
                 out.push(',');
             }
             let id = SlotId { factor: fi as u16, slot: slot as u8 };
@@ -1980,8 +2019,8 @@ metric mg on schw bundle TM {{
 
     #[test]
     fn parses_and_resolves_a_monomial() {
-        let reg = parse_model(PRELUDE).unwrap().registry;
-        let m = parse_monomial("R[a,b,c,d] R[c,d,a,b]", &reg).unwrap();
+        let mut reg = parse_model(PRELUDE).unwrap().registry;
+        let m = parse_monomial("R[a,b,c,d] R[c,d,a,b]", &mut reg).unwrap();
         assert_eq!(m.factors().len(), 2);
         assert!(m.free().is_empty());
         assert_eq!(m.contractions().len(), 4);
@@ -1989,29 +2028,29 @@ metric mg on schw bundle TM {{
 
     #[test]
     fn parses_rational_coefficient_with_sign() {
-        let reg = parse_model(PRELUDE).unwrap().registry;
-        let m = parse_monomial("-3/4 g[a,b]", &reg).unwrap();
+        let mut reg = parse_model(PRELUDE).unwrap().registry;
+        let m = parse_monomial("-3/4 g[a,b]", &mut reg).unwrap();
         assert_eq!(m.coeff(), Scalar::new(-3, 4));
     }
 
     #[test]
     fn index_appearing_three_times_is_a_parse_error() {
-        let reg = parse_model(PRELUDE).unwrap().registry;
-        let err = parse_monomial("R[a,a,a,b]", &reg).unwrap_err();
+        let mut reg = parse_model(PRELUDE).unwrap().registry;
+        let err = parse_monomial("R[a,a,a,b]", &mut reg).unwrap_err();
         assert!(matches!(err, CliError::Parse { .. }));
     }
 
     #[test]
     fn wrong_arity_is_a_parse_error() {
-        let reg = parse_model(PRELUDE).unwrap().registry;
-        let err = parse_monomial("g[a,b,c]", &reg).unwrap_err();
+        let mut reg = parse_model(PRELUDE).unwrap().registry;
+        let err = parse_monomial("g[a,b,c]", &mut reg).unwrap_err();
         assert!(matches!(err, CliError::Parse { .. }));
     }
 
     #[test]
     fn format_round_trips_free_indices() {
-        let reg = parse_model(PRELUDE).unwrap().registry;
-        let m = parse_monomial("R[a,b,c,d]", &reg).unwrap();
+        let mut reg = parse_model(PRELUDE).unwrap().registry;
+        let m = parse_monomial("R[a,b,c,d]", &mut reg).unwrap();
         assert_eq!(format_monomial(&m, &reg), "R[a,b,c,d]");
     }
 }

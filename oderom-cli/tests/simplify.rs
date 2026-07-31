@@ -211,3 +211,67 @@ fn elimination_composes_with_the_symmetry_cancellation_that_follows() {
     assert!(ok, "{err}");
     assert_eq!(out, "0");
 }
+
+// ---------------------------------------------------------------------
+// Covariant derivatives, written `T[a,b;c]` -- the standard GR spelling
+// (comma for partial, semicolon for covariant), so `R[a,b,c,d;e]` is
+// `nabla_e R_abcd`. A derivative adds a trailing slot; the base tensor's
+// symmetry still applies to the original slots and to nothing else.
+// ---------------------------------------------------------------------
+
+/// The rendering round-trips: what comes out is what goes in.
+#[test]
+fn a_covariant_derivative_round_trips_through_the_renderer() {
+    let (ok, out, err) = simplify(&["R[a,b,c,d;e]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "R[a,b,c,d;e]");
+}
+
+/// The base tensor's symmetry still applies underneath the derivative:
+/// Riemann's first-pair antisymmetry survives differentiation.
+#[test]
+fn the_base_symmetry_still_applies_under_a_derivative() {
+    let (ok, out, err) = simplify(&["R[b,a,c,d;e]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "-1 R[a,b,c,d;e]");
+}
+
+/// ...and therefore cancels in a sum, exactly as it does undifferentiated.
+#[test]
+fn antisymmetry_under_a_derivative_cancels_the_sum() {
+    let (ok, out, err) = simplify(&["R[a,b,c,d;e] + R[b,a,c,d;e]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}
+
+/// **The load-bearing negative control.** Second covariant derivatives do
+/// not commute -- `nabla_e nabla_f - nabla_f nabla_e` applied to a tensor
+/// is the Riemann tensor acting on it, which is the whole content of
+/// curvature. So this difference must NOT vanish. If it ever starts
+/// printing `0`, some change has declared the derivative slots symmetric
+/// and thereby silently asserted flat space.
+#[test]
+fn second_derivatives_do_not_commute() {
+    let (ok, out, err) = simplify(&["R[a,b,c,d;e,f] - R[a,b,c,d;f,e]"]);
+    assert!(ok, "{err}");
+    assert_ne!(out, "0", "declaring derivative slots symmetric would assert flatness");
+    assert_eq!(out.matches("R[").count(), 2, "both orderings must survive: {out}");
+}
+
+/// A derivative index does not participate in the base tensor's
+/// symmetry: swapping a tensor slot with a derivative slot is a
+/// different object, not a resymmetrization.
+#[test]
+fn a_derivative_index_is_not_interchangeable_with_a_tensor_index() {
+    let (ok, out, err) = simplify(&["R[a,b,c,d;e] - R[a,b,c,e;d]"]);
+    assert!(ok, "{err}");
+    assert_ne!(out, "0", "a derivative slot must not be permutable with a tensor slot");
+}
+
+/// A `;` with nothing after it is a clean parse error.
+#[test]
+fn a_semicolon_with_no_derivative_index_is_a_clean_error() {
+    let (ok, _out, err) = simplify(&["R[a,b,c,d;]"]);
+    assert!(!ok, "a dangling `;` must not be accepted");
+    assert!(!err.is_empty());
+}

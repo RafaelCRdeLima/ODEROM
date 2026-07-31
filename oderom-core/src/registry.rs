@@ -4,8 +4,8 @@
 //! never strings.
 
 use crate::error::CoreError;
-use crate::head::{HeadId, SlotSig, TensorHead};
-use crate::perm::SignedPerm;
+use crate::head::{HeadId, SlotSig, TensorHead, Variance};
+use crate::perm::{Perm, SignedPerm};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -108,6 +108,66 @@ impl Registry {
         Ok(id)
     }
 
+    /// The head representing `k` covariant derivatives of `base`, e.g.
+    /// `∇_c T_ab` for `k = 1` -- created on first use and reused after,
+    /// so the same derivative in two different monomials is the same
+    /// head and therefore comparable.
+    ///
+    /// Arity is `arity(base) + k`, with the derivative slots last.
+    /// `base`'s symmetry generators are extended to fix those trailing
+    /// slots (a permutation of the first `n` becomes a permutation of
+    /// `n + k` fixing the tail), so the differentiated tensor keeps
+    /// exactly the symmetry it had and gains none. In particular nothing
+    /// is declared between two derivative slots: `∇_a ∇_b` and
+    /// `∇_b ∇_a` differ by the Riemann tensor, so calling them symmetric
+    /// would be asserting flatness.
+    ///
+    /// The synthesized name is `base;k`, which is not a legal
+    /// user-declared name (`;` cannot appear in an identifier), so this
+    /// can never collide with something the user declared.
+    pub fn derivative_head(&mut self, base: HeadId, k: u8) -> Result<HeadId, CoreError> {
+        if k == 0 {
+            return Ok(base);
+        }
+        let name = format!("{};{k}", self.head(base).name);
+        if let Some(NameEntry::Head(id)) = self.names.get(&name) {
+            return Ok(*id);
+        }
+
+        let base_head = self.head(base);
+        let base_arity = base_head.arity();
+        let total = base_arity + k as usize;
+
+        // Derivative slots carry the same signature as the manifold's
+        // own covariant index: a derivative index is a lower index on
+        // the same bundle. Taking it from the base head's first slot
+        // keeps bundle/dimension consistent without inventing one.
+        let proto = *base_head.slots.first().ok_or(CoreError::UnknownHead(name.clone()))?;
+        let mut slots: SmallVec<[SlotSig; 4]> = base_head.slots.clone();
+        for _ in 0..k {
+            slots.push(SlotSig { variance: Variance::Co, ..proto });
+        }
+
+        let generators: Vec<SignedPerm> = base_head
+            .symmetry_generators
+            .iter()
+            .map(|g| {
+                let mut images: Vec<u16> = (0..total as u16).collect();
+                for i in 0..base_arity {
+                    images[i] = g.perm.image(i as u16);
+                }
+                SignedPerm::new(Perm::try_from_images(&images).expect("extending a permutation with fixed points stays a permutation"), g.sign)
+            })
+            .collect();
+
+        let id = HeadId(self.heads.len() as u32);
+        let mut head = TensorHead::new(id, name.clone(), slots, generators);
+        head.derivative_of = Some((base, k));
+        self.heads.push(head);
+        self.names.insert(name, NameEntry::Head(id));
+        Ok(id)
+    }
+
     fn check_free_name(&self, name: &str) -> Result<(), CoreError> {
         if self.names.contains_key(name) {
             Err(CoreError::DuplicateName(name.to_string()))
@@ -201,5 +261,79 @@ mod tests {
             err,
             CoreError::GeneratorArityMismatch { head: "g".to_string(), expected: 2, found: 3 }
         );
+    }
+}
+
+#[cfg(test)]
+mod derivative_head_tests {
+    use super::*;
+
+    fn riemann() -> (Registry, HeadId) {
+        let mut reg = Registry::new();
+        let m = reg.declare_manifold("M", 4).unwrap();
+        let tm = reg.declare_bundle("TM", m, 4).unwrap();
+        let co = SlotSig { bundle: tm, variance: Variance::Co, dim: 4 };
+        let slots: SmallVec<[SlotSig; 4]> = smallvec::smallvec![co, co, co, co];
+        let gens = vec![
+            SignedPerm::new(Perm::transposition(4, 0, 1), -1),
+            SignedPerm::new(Perm::transposition(4, 2, 3), -1),
+            SignedPerm::new(Perm::try_from_images(&[2, 3, 0, 1]).unwrap(), 1),
+        ];
+        let r = reg.declare_head("R", slots, gens).unwrap();
+        (reg, r)
+    }
+
+    #[test]
+    fn one_derivative_adds_exactly_one_trailing_slot() {
+        let (mut reg, r) = riemann();
+        let dr = reg.derivative_head(r, 1).unwrap();
+        assert_eq!(reg.head(dr).arity(), 5);
+        assert_eq!(reg.head(dr).derivative_count(), 1);
+        assert_eq!(reg.head(dr).base_head(), r);
+    }
+
+    /// The differentiated tensor keeps exactly the base's symmetry and
+    /// gains none: every generator must fix the derivative slot.
+    #[test]
+    fn the_derivative_slot_is_fixed_by_every_inherited_generator() {
+        let (mut reg, r) = riemann();
+        let dr = reg.derivative_head(r, 1).unwrap();
+        let head = reg.head(dr);
+        assert_eq!(head.symmetry_generators.len(), reg.head(r).symmetry_generators.len());
+        for g in &head.symmetry_generators {
+            assert_eq!(g.perm.len(), 5);
+            assert_eq!(g.perm.image(4), 4, "a derivative slot must never be permuted with a tensor slot");
+        }
+    }
+
+    /// Load-bearing absence: nothing may relate two derivative slots to
+    /// each other. `∇_a ∇_b` and `∇_b ∇_a` differ by the Riemann tensor,
+    /// so declaring them symmetric would silently assert flatness. If a
+    /// future change starts generating a symmetry here, this fails.
+    #[test]
+    fn two_derivative_slots_are_not_declared_symmetric() {
+        let (mut reg, r) = riemann();
+        let ddr = reg.derivative_head(r, 2).unwrap();
+        let head = reg.head(ddr);
+        assert_eq!(head.arity(), 6);
+        for g in &head.symmetry_generators {
+            assert_eq!(g.perm.image(4), 4, "derivative slots must stay fixed");
+            assert_eq!(g.perm.image(5), 5, "derivative slots must stay fixed");
+        }
+    }
+
+    /// The same derivative asked for twice is the same head, so two
+    /// monomials mentioning it are comparable.
+    #[test]
+    fn the_same_derivative_is_cached_not_redeclared() {
+        let (mut reg, r) = riemann();
+        assert_eq!(reg.derivative_head(r, 1).unwrap(), reg.derivative_head(r, 1).unwrap());
+        assert_ne!(reg.derivative_head(r, 1).unwrap(), reg.derivative_head(r, 2).unwrap());
+    }
+
+    #[test]
+    fn zero_derivatives_is_the_base_head_itself() {
+        let (mut reg, r) = riemann();
+        assert_eq!(reg.derivative_head(r, 0).unwrap(), r);
     }
 }
