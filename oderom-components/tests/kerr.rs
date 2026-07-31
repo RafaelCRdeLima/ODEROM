@@ -25,9 +25,10 @@
 //! callers use.
 
 use oderom_components::curvature::{
-    christoffel, christoffel_localized, kretschmann_localized, lower_first_index, lower_first_index_localized, metric_inverse, metric_inverse_diagonal, metric_block_structure,
-    localization_generators, ricci_tensor, ricci_tensor_localized, riemann_mixed, riemann_mixed_localized, verify_metric_inverse,
+    christoffel, christoffel_with_engine, kretschmann_with_engine, lower_first_index, lower_first_index_with_engine, metric_inverse, metric_inverse_diagonal, metric_block_structure,
+    localization_generators, ricci_tensor, ricci_tensor_with_engine, riemann_mixed, riemann_mixed_with_engine, verify_metric_inverse,
 };
+use oderom_components::curvature::Engine;
 use oderom_components::{Chart, ComponentError, ComponentTensor, Grid};
 use oderom_core::{Perm, Registry, SignedPerm, SlotSig, Variance};
 use oderom_expr::{normalize, Expr, LocalizationContext};
@@ -203,9 +204,9 @@ fn ricci_of_kerr_is_identically_zero_via_the_localized_engine() {
     let k = build().unwrap();
     let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
-    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
-    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx).unwrap();
+    let gamma = christoffel_with_engine(&k.registry, &k.chart, &k.g, &k.ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let riem_mixed = riemann_mixed_with_engine(&k.chart, &gamma, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let ricci = ricci_tensor_with_engine(&k.chart, &riem_mixed, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
     for b in 0..k.chart.dim() as u8 {
         for d in 0..k.chart.dim() as u8 {
             let component = ricci.get(&[b, d]);
@@ -246,10 +247,10 @@ fn kretschmann_of_kerr_matches_the_closed_form_via_the_localized_engine() {
     let k = build().unwrap();
     let seeds = localization_generators(&k.registry, &k.chart, &k.g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
-    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
-    let riem_cov = lower_first_index_localized(&k.registry, &k.chart, &riem_mixed, &k.g, &mut ctx).unwrap();
-    let kretschmann = kretschmann_localized(&k.chart, &riem_cov, &k.ginv, &mut ctx).unwrap();
+    let gamma = christoffel_with_engine(&k.registry, &k.chart, &k.g, &k.ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let riem_mixed = riemann_mixed_with_engine(&k.chart, &gamma, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let riem_cov = lower_first_index_with_engine(&k.registry, &k.chart, &riem_mixed, &k.g, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let kretschmann = kretschmann_with_engine(&k.chart, &riem_cov, &k.ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
 
     let m = Expr::var("M");
     let a = Expr::var("a");
@@ -321,17 +322,17 @@ fn diagnostic_localized_engine_stage_timing() {
     flushed!("generator_count after seeding: {}", ctx.generator_count());
 
     let t0 = Instant::now();
-    let gamma = christoffel_localized(&k.registry, &k.chart, &k.g, &k.ginv, &mut ctx).unwrap();
+    let gamma = christoffel_with_engine(&k.registry, &k.chart, &k.g, &k.ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
     flushed!("christoffel_localized: {:?}  (generators now: {})", t0.elapsed(), ctx.generator_count());
     flushed!("fallback_log after christoffel: {:?}", ctx.fallback_log());
 
     let t0 = Instant::now();
-    let riem_mixed = riemann_mixed_localized(&k.chart, &gamma, &mut ctx).unwrap();
+    let riem_mixed = riemann_mixed_with_engine(&k.chart, &gamma, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
     flushed!("riemann_mixed_localized: {:?}  (generators now: {})", t0.elapsed(), ctx.generator_count());
     flushed!("fallback_log after riemann_mixed: {:?}", ctx.fallback_log());
 
     let t0 = Instant::now();
-    let ricci = ricci_tensor_localized(&k.chart, &riem_mixed, &mut ctx).unwrap();
+    let ricci = ricci_tensor_with_engine(&k.chart, &riem_mixed, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
     flushed!("ricci_tensor_localized: {:?}", t0.elapsed());
 
     for b in 0..k.chart.dim() as u8 {
@@ -377,7 +378,7 @@ fn christoffel_localized_reports_the_escaped_denominator_when_the_budget_runs_ou
         calls += 1;
         calls > 2
     };
-    let err = oderom_components::curvature::christoffel_localized_checkpointed(&registry, &chart, &g, &ginv, &mut ctx, &mut checkpoint).expect_err("a (x-1)^3-shaped denominator must force the general-engine fallback, which the tripped checkpoint must then catch");
+    let err = christoffel_with_engine(&registry, &chart, &g, &ginv, &mut Engine::Localized(&mut ctx), &mut checkpoint).expect_err("a (x-1)^3-shaped denominator must force the general-engine fallback, which the tripped checkpoint must then catch");
 
     let message = err.to_string();
     match &err {

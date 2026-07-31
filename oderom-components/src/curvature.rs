@@ -407,30 +407,7 @@ pub fn christoffel_checkpointed(
     ginv: &Grid,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
-    let n = chart.dim();
-    let mut gamma = Grid::new(n, 3);
-    for a in 0..n as u8 {
-        for b in 0..n as u8 {
-            for c in 0..n as u8 {
-                if checkpoint() {
-                    return Err(ComponentError::Cancelled);
-                }
-                let mut sum = Expr::zero();
-                for d in 0..n as u8 {
-                    let ad = ginv.get(&[a, d]);
-                    if ad.is_zero() {
-                        continue;
-                    }
-                    let term = diff(&g.get(registry, &[d, c])?, chart.coord(b))
-                        + diff(&g.get(registry, &[d, b])?, chart.coord(c))
-                        + Expr::int(-1) * diff(&g.get(registry, &[b, c])?, chart.coord(d));
-                    sum = sum + ad * term;
-                }
-                gamma.set(&[a, b, c], normalize(&(Expr::rational(1, 2) * sum)));
-            }
-        }
-    }
-    Ok(gamma)
+    christoffel_with_engine(registry, chart, g, ginv, &mut Engine::General, checkpoint)
 }
 
 /// The localization generator set for `g` (DESIGN-RATIONAL-FORM.md
@@ -487,8 +464,8 @@ pub fn localization_generators(registry: &Registry, chart: &Chart, g: &Component
 /// `oderom_expr::LocalizationBudgetExceeded` fires, and joins its
 /// generator list into the rendered form
 /// `ComponentError::LocalizationFallbackBudgetExceeded` displays --
-/// the one place that conversion happens, so every `*_localized_checkpointed`
-/// stage below reports the same shape of message.
+/// the one place that conversion happens, so every stage below reports
+/// the same shape of message.
 fn budget_exceeded_error(component: impl Into<String>, e: oderom_expr::LocalizationBudgetExceeded) -> ComponentError {
     ComponentError::LocalizationFallbackBudgetExceeded {
         component: component.into(),
@@ -497,36 +474,89 @@ fn budget_exceeded_error(component: impl Into<String>, e: oderom_expr::Localizat
     }
 }
 
-/// Same as [`christoffel`], but reduces every component against `ctx`'s
-/// localization generators (DESIGN-RATIONAL-FORM.md section 8) instead
-/// of relying solely on the general recursive multivariate GCD
-/// `normalize()` calls into -- the fix for a denominator with no single
-/// pole variable (Kerr's `Sigma`, section 7.1). `ctx` should be seeded
-/// via [`localization_generators`] and shared with every later stage of
-/// the same metric's computation (`riemann_mixed_localized`,
-/// `ricci_tensor_localized`) so a generator discovered in one stage is
-/// recognized in the next.
-pub fn christoffel_localized(registry: &Registry, chart: &Chart, g: &ComponentTensor, ginv: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    christoffel_localized_checkpointed(registry, chart, g, ginv, ctx, &mut || false)
+/// Which reduction engine a curvature stage runs its (single, per
+/// component) `normalize` call through -- DESIGN-RATIONAL-FORM.md
+/// section 8's own "todo subcomando roteia igual" rule made structural
+/// rather than watched.
+///
+/// Every stage function below funnels its one reduction point through
+/// [`Engine::reduce`], so "which engine ran" is a *value threaded from
+/// the caller*, never a separate copy of the stage's body per engine.
+/// Before this existed, each localized stage was a duplicate function
+/// (`christoffel_localized_checkpointed` beside
+/// `christoffel_checkpointed`), which meant covering the remaining six
+/// stages -- `ricci_scalar`, `einstein_tensor`, `ricci_squared`,
+/// `weyl_tensor`, `weyl_squared`, `gauss_bonnet` -- would have doubled
+/// the API a second time and left the routing decision spread across
+/// ~20 call sites in `oderom-cli`. It also would have made "no
+/// subcommand left on the wrong engine" a property somebody has to
+/// keep checking; here it is a property of the type.
+///
+/// The general-engine functions callers already use
+/// (`christoffel_checkpointed` and friends, called from
+/// `oderom-session` and `oderom-cli`) keep their exact signatures --
+/// they are now thin wrappers passing `Engine::General`, so nothing
+/// outside this module changed shape.
+pub enum Engine<'a> {
+    /// `oderom_expr::normalize` -- the recursive multivariate GCD
+    /// engine, correct for everything, slow (or non-terminating within
+    /// a budget) for a denominator with no single pole variable
+    /// (section 7.1, Kerr's `Sigma`).
+    General,
+    /// `oderom_expr::normalize_localized` against a shared, growing
+    /// [`LocalizationContext`] -- section 8's structured-denominator
+    /// engine.
+    Localized(&'a mut LocalizationContext),
 }
 
-/// Same as [`christoffel_localized`], but calls `checkpoint` once per
-/// independent `(a,b,c)` component (coarse -- matching
-/// [`christoffel_checkpointed`]'s own granularity, DESIGN-RATIONAL-FORM.md
-/// section 8's "checkpoint per component in the outer loop is enough,
-/// don't instrument Poly's own arithmetic") *and* once more, mandatorily,
-/// at the one point a component's computation can leave the localized
-/// representation for the general engine
-/// (`oderom_expr::localized`'s single, unified fallback boundary) --
-/// that second check is where the historically non-terminating case
-/// actually lives (section 7.1), so it is never skipped regardless of
-/// how coarse the outer loop's own checking is.
-pub fn christoffel_localized_checkpointed(
+impl Engine<'_> {
+    /// The single reduction point every stage funnels through.
+    /// `component` names what is being computed, used only to build a
+    /// [`ComponentError::LocalizationFallbackBudgetExceeded`] if the
+    /// localized engine's budget runs out at its fallback boundary --
+    /// evaluated lazily (a closure, not a `String`) so the general
+    /// path, which can never produce that error, pays nothing to
+    /// format a name it will not use.
+    pub fn reduce(&mut self, e: &Expr, component: impl FnOnce() -> String, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+        match self {
+            Engine::General => Ok(normalize(e)),
+            Engine::Localized(ctx) => normalize_localized(e, ctx, checkpoint).map_err(|err| budget_exceeded_error(component(), err)),
+        }
+    }
+
+    /// Whether this is the localized engine -- for the rare caller that
+    /// needs to report which path ran, never for choosing behavior
+    /// (that is what [`Engine::reduce`] is for).
+    pub fn is_localized(&self) -> bool {
+        matches!(self, Engine::Localized(_))
+    }
+}
+
+/// `Gamma^a_bc`, with the reduction engine chosen by the caller
+/// ([`Engine`]) rather than baked into which function was called.
+/// `Engine::General` reproduces [`christoffel_checkpointed`] exactly
+/// (that function is now a thin wrapper over this one);
+/// `Engine::Localized` reduces against the shared localization
+/// generators (DESIGN-RATIONAL-FORM.md section 8) -- the fix for a
+/// denominator with no single pole variable (Kerr's `Sigma`, section
+/// 7.1). A localized context should be seeded via
+/// [`localization_generators`] and shared with every later stage of the
+/// same metric's computation, so a generator discovered in one stage is
+/// recognized in the next.
+///
+/// `checkpoint` is called once per independent `(a,b,c)` component
+/// (coarse) *and* once more, mandatorily, at the one point a
+/// component's computation can leave the localized representation for
+/// the general engine (`oderom_expr::localized`'s single, unified
+/// fallback boundary) -- that second check is where the historically
+/// non-terminating case actually lives, so it is never skipped no
+/// matter how coarse the outer loop's own checking is.
+pub fn christoffel_with_engine(
     registry: &Registry,
     chart: &Chart,
     g: &ComponentTensor,
     ginv: &Grid,
-    ctx: &mut LocalizationContext,
+    engine: &mut Engine,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
     let n = chart.dim();
@@ -548,8 +578,7 @@ pub fn christoffel_localized_checkpointed(
                         + Expr::int(-1) * diff(&g.get(registry, &[b, c])?, chart.coord(d));
                     sum = sum + ad * term;
                 }
-                let reduced = normalize_localized(&(Expr::rational(1, 2) * sum), ctx, checkpoint)
-                    .map_err(|e| budget_exceeded_error(format!("Gamma^{a}_{{{b}{c}}}"), e))?;
+                let reduced = engine.reduce(&(Expr::rational(1, 2) * sum), || format!("Gamma^{a}_{{{b}{c}}}"), checkpoint)?;
                 gamma.set(&[a, b, c], reduced);
             }
         }
@@ -756,43 +785,16 @@ pub fn riemann_mixed(chart: &Chart, gamma: &Grid) -> Grid {
 /// independent `(a,b,c,d)` component -- see [`christoffel_checkpointed`]
 /// for the measured latency this buys.
 pub fn riemann_mixed_checkpointed(chart: &Chart, gamma: &Grid, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
-    let n = chart.dim();
-    let mut riem = Grid::new(n, 4);
-    for a in 0..n as u8 {
-        for b in 0..n as u8 {
-            for c in 0..n as u8 {
-                for d in 0..n as u8 {
-                    if checkpoint() {
-                        return Err(ComponentError::Cancelled);
-                    }
-                    let mut val = diff(&gamma.get(&[a, b, d]), chart.coord(c))
-                        + Expr::int(-1) * diff(&gamma.get(&[a, b, c]), chart.coord(d));
-                    for e in 0..n as u8 {
-                        val = val
-                            + gamma.get(&[a, c, e]) * gamma.get(&[e, b, d])
-                            + Expr::int(-1) * gamma.get(&[a, d, e]) * gamma.get(&[e, b, c]);
-                    }
-                    riem.set(&[a, b, c, d], normalize(&val));
-                }
-            }
-        }
-    }
-    Ok(riem)
+    riemann_mixed_with_engine(chart, gamma, &mut Engine::General, checkpoint)
 }
 
-/// Same as [`riemann_mixed`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]) instead of the general
-/// engine. This is the stage section 7.1 measured never terminating
-/// within a 180s budget for Kerr under the general engine.
-pub fn riemann_mixed_localized(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    riemann_mixed_localized_checkpointed(chart, gamma, ctx, &mut || false)
-}
-
-/// Same as [`riemann_mixed_localized`], checkpointed per independent
-/// `(a,b,c,d)` component, plus the mandatory check at the fallback
-/// boundary -- see [`christoffel_localized_checkpointed`]'s own doc
-/// comment for why both exist and neither substitutes for the other.
-pub fn riemann_mixed_localized_checkpointed(chart: &Chart, gamma: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+/// `R^a_bcd`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces
+/// [`riemann_mixed_checkpointed`] exactly (a thin wrapper over this);
+/// `Engine::Localized` is the stage DESIGN-RATIONAL-FORM.md section 7.1
+/// measured never terminating within a 180s budget for Kerr under the
+/// general engine, and section 8 brought to under a second.
+pub fn riemann_mixed_with_engine(chart: &Chart, gamma: &Grid, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut riem = Grid::new(n, 4);
     for a in 0..n as u8 {
@@ -806,7 +808,7 @@ pub fn riemann_mixed_localized_checkpointed(chart: &Chart, gamma: &Grid, ctx: &m
                     for e in 0..n as u8 {
                         val = val + gamma.get(&[a, c, e]) * gamma.get(&[e, b, d]) + Expr::int(-1) * gamma.get(&[a, d, e]) * gamma.get(&[e, b, c]);
                     }
-                    let reduced = normalize_localized(&val, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("R^{a}_{{{b}{c}{d}}}"), e))?;
+                    let reduced = engine.reduce(&val, || format!("R^{a}_{{{b}{c}{d}}}"), checkpoint)?;
                     riem.set(&[a, b, c, d], reduced);
                 }
             }
@@ -815,22 +817,16 @@ pub fn riemann_mixed_localized_checkpointed(chart: &Chart, gamma: &Grid, ctx: &m
     Ok(riem)
 }
 
-/// Same as [`lower_index`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]).
-pub fn lower_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g: &ComponentTensor, position: usize, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    lower_index_localized_checkpointed(registry, chart, grid, g, position, ctx, &mut || false)
-}
-
-/// Same as [`lower_index_localized`], checkpointed per raw index tuple,
-/// plus the mandatory check at the fallback boundary -- see
-/// [`christoffel_localized_checkpointed`]'s own doc comment.
-pub fn lower_index_localized_checkpointed(
+/// Lowers one index (0-based `position`) of `grid` through `g`, with the
+/// reduction engine chosen by the caller ([`Engine`]).
+/// `Engine::General` reproduces [`lower_index_checkpointed`] exactly.
+pub fn lower_index_with_engine(
     registry: &Registry,
     chart: &Chart,
     grid: &Grid,
     g: &ComponentTensor,
     position: usize,
-    ctx: &mut LocalizationContext,
+    engine: &mut Engine,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
     let n = chart.dim();
@@ -851,47 +847,35 @@ pub fn lower_index_localized_checkpointed(
             src[position] = a;
             sum = sum + g_ea * grid.get(&src);
         }
-        let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("indice {idx:?} (abaixando posicao {position})"), e))?;
+        let reduced = engine.reduce(&sum, || format!("indice {idx:?} (abaixando posicao {position})"), checkpoint)?;
         out.set(idx, reduced);
         Ok(())
     })?;
     Ok(out)
 }
 
-/// Same as [`lower_first_index`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]).
-pub fn lower_first_index_localized(registry: &Registry, chart: &Chart, grid: &Grid, g: &ComponentTensor, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    lower_index_localized(registry, chart, grid, g, 0, ctx)
-}
-
-/// Same as [`lower_first_index_localized`], checkpointed -- see
-/// [`lower_index_localized_checkpointed`].
-pub fn lower_first_index_localized_checkpointed(
+/// [`lower_index_with_engine`] at `position` 0 -- the fully covariant
+/// Riemann's own lowering step.
+pub fn lower_first_index_with_engine(
     registry: &Registry,
     chart: &Chart,
     grid: &Grid,
     g: &ComponentTensor,
-    ctx: &mut LocalizationContext,
+    engine: &mut Engine,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
-    lower_index_localized_checkpointed(registry, chart, grid, g, 0, ctx, checkpoint)
+    lower_index_with_engine(registry, chart, grid, g, 0, engine, checkpoint)
 }
 
-/// Same as [`raise_index`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]).
-pub fn raise_index_localized(chart: &Chart, grid: &Grid, ginv: &Grid, position: usize, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    raise_index_localized_checkpointed(chart, grid, ginv, position, ctx, &mut || false)
-}
-
-/// Same as [`raise_index_localized`], checkpointed per raw index tuple,
-/// plus the mandatory check at the fallback boundary -- see
-/// [`christoffel_localized_checkpointed`]'s own doc comment.
-pub fn raise_index_localized_checkpointed(
+/// Raises one index (0-based `position`) of `grid` through `ginv`, with
+/// the reduction engine chosen by the caller ([`Engine`]).
+/// `Engine::General` reproduces [`raise_index_checkpointed`] exactly.
+pub fn raise_index_with_engine(
     chart: &Chart,
     grid: &Grid,
     ginv: &Grid,
     position: usize,
-    ctx: &mut LocalizationContext,
+    engine: &mut Engine,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
     let n = chart.dim();
@@ -912,30 +896,21 @@ pub fn raise_index_localized_checkpointed(
             src[position] = a;
             sum = sum + coeff * grid.get(&src);
         }
-        let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("indice {idx:?} (subindo posicao {position})"), e))?;
+        let reduced = engine.reduce(&sum, || format!("indice {idx:?} (subindo posicao {position})"), checkpoint)?;
         out.set(idx, reduced);
         Ok(())
     })?;
     Ok(out)
 }
 
-/// Same as [`kretschmann`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]) -- the fix for
-/// DESIGN-RATIONAL-FORM.md section 7.1.
-pub fn kretschmann_localized(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext) -> Result<Expr, ComponentError> {
-    kretschmann_localized_checkpointed(chart, riemann_cov, ginv, ctx, &mut || false)
-}
-
-/// Same as [`kretschmann_localized`], checkpointed through the four
-/// [`raise_index_localized_checkpointed`] calls and once per summed
-/// term, plus the mandatory check at the final `normalize_localized`'s
-/// own fallback boundary -- see [`christoffel_localized_checkpointed`]'s
-/// own doc comment.
-pub fn kretschmann_localized_checkpointed(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
-    let raised0 = raise_index_localized_checkpointed(chart, riemann_cov, ginv, 0, ctx, checkpoint)?;
-    let raised1 = raise_index_localized_checkpointed(chart, &raised0, ginv, 1, ctx, checkpoint)?;
-    let raised2 = raise_index_localized_checkpointed(chart, &raised1, ginv, 2, ctx, checkpoint)?;
-    let riemann_contra = raise_index_localized_checkpointed(chart, &raised2, ginv, 3, ctx, checkpoint)?;
+/// `R_abcd R^abcd`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces
+/// [`kretschmann_checkpointed`] exactly.
+pub fn kretschmann_with_engine(chart: &Chart, riemann_cov: &Grid, ginv: &Grid, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+    let raised0 = raise_index_with_engine(chart, riemann_cov, ginv, 0, engine, checkpoint)?;
+    let raised1 = raise_index_with_engine(chart, &raised0, ginv, 1, engine, checkpoint)?;
+    let raised2 = raise_index_with_engine(chart, &raised1, ginv, 2, engine, checkpoint)?;
+    let riemann_contra = raise_index_with_engine(chart, &raised2, ginv, 3, engine, checkpoint)?;
 
     let n = chart.dim();
     let mut sum = Expr::zero();
@@ -947,7 +922,7 @@ pub fn kretschmann_localized_checkpointed(chart: &Chart, riemann_cov: &Grid, gin
         sum = std::mem::replace(&mut sum, Expr::zero()) + term;
         Ok(())
     })?;
-    normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error("Kretschmann", e))
+    engine.reduce(&sum, || "Kretschmann".to_string(), checkpoint)
 }
 
 /// Lowers a `Grid`'s first index through `g`: `T_{e...} = g_{ea} T^a_{...}`.
@@ -999,28 +974,7 @@ pub fn lower_index_checkpointed(
     position: usize,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
-    let n = chart.dim();
-    let rank = grid.rank();
-    let mut out = Grid::new(n, rank);
-    for_each_index_tuple(n, rank, |idx| {
-        if checkpoint() {
-            return Err(ComponentError::Cancelled);
-        }
-        let target = idx[position];
-        let mut sum = Expr::zero();
-        for a in 0..n as u8 {
-            let g_ea = g.get(registry, &[target, a])?;
-            if g_ea.is_zero() {
-                continue;
-            }
-            let mut src = idx.to_vec();
-            src[position] = a;
-            sum = sum + g_ea * grid.get(&src);
-        }
-        out.set(idx, normalize(&sum));
-        Ok(())
-    })?;
-    Ok(out)
+    lower_index_with_engine(registry, chart, grid, g, position, &mut Engine::General, checkpoint)
 }
 
 /// Raises one index of a `Grid` (0-based `position`) through `ginv`:
@@ -1041,28 +995,7 @@ pub fn raise_index_checkpointed(
     position: usize,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
-    let n = chart.dim();
-    let rank = grid.rank();
-    let mut out = Grid::new(n, rank);
-    for_each_index_tuple(n, rank, |idx| {
-        if checkpoint() {
-            return Err(ComponentError::Cancelled);
-        }
-        let target = idx[position];
-        let mut sum = Expr::zero();
-        for a in 0..n as u8 {
-            let coeff = ginv.get(&[target, a]);
-            if coeff.is_zero() {
-                continue;
-            }
-            let mut src = idx.to_vec();
-            src[position] = a;
-            sum = sum + coeff * grid.get(&src);
-        }
-        out.set(idx, normalize(&sum));
-        Ok(())
-    })?;
-    Ok(out)
+    raise_index_with_engine(chart, grid, ginv, position, &mut Engine::General, checkpoint)
 }
 
 /// Changes `grid`'s per-slot variance from `current` to `desired`, one
@@ -1150,6 +1083,13 @@ pub fn ricci_tensor(chart: &Chart, riemann_mixed: &Grid) -> Grid {
 /// cheap -- `n^2` components, not `n^4` -- but the hook is here for
 /// consistency with every other stage function).
 pub fn ricci_tensor_checkpointed(chart: &Chart, riemann_mixed: &Grid, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
+    ricci_tensor_with_engine(chart, riemann_mixed, &mut Engine::General, checkpoint)
+}
+
+/// `R_bd = R^a_bad`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces
+/// [`ricci_tensor_checkpointed`] exactly.
+pub fn ricci_tensor_with_engine(chart: &Chart, riemann_mixed: &Grid, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut ricci = Grid::new(n, 2);
     for b in 0..n as u8 {
@@ -1161,34 +1101,7 @@ pub fn ricci_tensor_checkpointed(chart: &Chart, riemann_mixed: &Grid, checkpoint
             for a in 0..n as u8 {
                 sum = sum + riemann_mixed.get(&[a, b, a, d]);
             }
-            ricci.set(&[b, d], normalize(&sum));
-        }
-    }
-    Ok(ricci)
-}
-
-/// Same as [`ricci_tensor`], but reduces via `ctx`'s localization
-/// generators (see [`christoffel_localized`]).
-pub fn ricci_tensor_localized(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext) -> Result<Grid, ComponentError> {
-    ricci_tensor_localized_checkpointed(chart, riemann_mixed, ctx, &mut || false)
-}
-
-/// Same as [`ricci_tensor_localized`], checkpointed per independent
-/// `(b,d)` component, plus the mandatory check at the fallback boundary
-/// -- see [`christoffel_localized_checkpointed`]'s own doc comment.
-pub fn ricci_tensor_localized_checkpointed(chart: &Chart, riemann_mixed: &Grid, ctx: &mut LocalizationContext, checkpoint: Checkpoint) -> Result<Grid, ComponentError> {
-    let n = chart.dim();
-    let mut ricci = Grid::new(n, 2);
-    for b in 0..n as u8 {
-        for d in 0..n as u8 {
-            if checkpoint() {
-                return Err(ComponentError::Cancelled);
-            }
-            let mut sum = Expr::zero();
-            for a in 0..n as u8 {
-                sum = sum + riemann_mixed.get(&[a, b, a, d]);
-            }
-            let reduced = normalize_localized(&sum, ctx, checkpoint).map_err(|e| budget_exceeded_error(format!("R_{{{b}{d}}}"), e))?;
+            let reduced = engine.reduce(&sum, || format!("R_{{{b}{d}}}"), checkpoint)?;
             ricci.set(&[b, d], reduced);
         }
     }
@@ -1197,6 +1110,12 @@ pub fn ricci_tensor_localized_checkpointed(chart: &Chart, riemann_mixed: &Grid, 
 
 /// `R = g^bd R_bd` (Ricci scalar).
 pub fn ricci_scalar(chart: &Chart, ricci: &Grid, ginv: &Grid) -> Expr {
+    ricci_scalar_with_engine(chart, ricci, ginv, &mut Engine::General, &mut || false).expect("Engine::General never fails and the checkpoint never cancels")
+}
+
+/// `R = g^bd R_bd`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces [`ricci_scalar`] exactly.
+pub fn ricci_scalar_with_engine(chart: &Chart, ricci: &Grid, ginv: &Grid, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
     let n = chart.dim();
     let mut sum = Expr::zero();
     for b in 0..n as u8 {
@@ -1208,7 +1127,7 @@ pub fn ricci_scalar(chart: &Chart, ricci: &Grid, ginv: &Grid) -> Expr {
             sum = sum + coeff * ricci.get(&[b, d]);
         }
     }
-    normalize(&sum)
+    engine.reduce(&sum, || "R (escalar de Ricci)".to_string(), checkpoint)
 }
 
 /// `R_ab R^ab` (the Ricci-squared scalar invariant, Marco 6 step 6) --
@@ -1235,8 +1154,15 @@ pub fn ricci_squared(chart: &Chart, ricci: &Grid, ginv: &Grid) -> Expr {
 /// structure and correct for any of [`metric_inverse_checkpointed`]'s
 /// three tiers.
 pub fn ricci_squared_checkpointed(chart: &Chart, ricci: &Grid, ginv: &Grid, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
-    let raised0 = raise_index_checkpointed(chart, ricci, ginv, 0, checkpoint)?;
-    let ricci_contra = raise_index_checkpointed(chart, &raised0, ginv, 1, checkpoint)?;
+    ricci_squared_with_engine(chart, ricci, ginv, &mut Engine::General, checkpoint)
+}
+
+/// `R_ab R^ab`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces
+/// [`ricci_squared_checkpointed`] exactly.
+pub fn ricci_squared_with_engine(chart: &Chart, ricci: &Grid, ginv: &Grid, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+    let raised0 = raise_index_with_engine(chart, ricci, ginv, 0, engine, checkpoint)?;
+    let ricci_contra = raise_index_with_engine(chart, &raised0, ginv, 1, engine, checkpoint)?;
 
     let n = chart.dim();
     let mut sum = Expr::zero();
@@ -1248,7 +1174,7 @@ pub fn ricci_squared_checkpointed(chart: &Chart, ricci: &Grid, ginv: &Grid, chec
         sum = std::mem::replace(&mut sum, Expr::zero()) + term;
         Ok(())
     })?;
-    Ok(normalize(&sum))
+    engine.reduce(&sum, || "R_ab R^ab".to_string(), checkpoint)
 }
 
 /// `R_abcd R^abcd - 4 R_ab R^ab + R^2` (the Gauss-Bonnet/Euler density,
@@ -1259,7 +1185,16 @@ pub fn ricci_squared_checkpointed(chart: &Chart, ricci: &Grid, ginv: &Grid, chec
 /// characteristic; the name/formula make sense in any dimension, this
 /// function does not restrict to `n=4`.
 pub fn gauss_bonnet(kretschmann: &Expr, ricci_squared: &Expr, ricci_scalar: &Expr) -> Expr {
-    normalize(&(kretschmann.clone() - Expr::int(4) * ricci_squared.clone() + ricci_scalar.clone().pow(2)))
+    gauss_bonnet_with_engine(kretschmann, ricci_squared, ricci_scalar, &mut Engine::General, &mut || false)
+        .expect("Engine::General never fails and the checkpoint never cancels")
+}
+
+/// `R_abcd R^abcd - 4 R_ab R^ab + R^2`, with the reduction engine
+/// chosen by the caller ([`Engine`]). `Engine::General` reproduces
+/// [`gauss_bonnet`] exactly.
+pub fn gauss_bonnet_with_engine(kretschmann: &Expr, ricci_squared: &Expr, ricci_scalar: &Expr, engine: &mut Engine, checkpoint: Checkpoint) -> Result<Expr, ComponentError> {
+    let combined = kretschmann.clone() - Expr::int(4) * ricci_squared.clone() + ricci_scalar.clone().pow(2);
+    engine.reduce(&combined, || "Gauss-Bonnet".to_string(), checkpoint)
 }
 
 /// `G_ab = R_ab - (1/2) g_ab R` (the Einstein tensor, fully covariant) --
@@ -1298,6 +1233,21 @@ pub fn einstein_tensor_checkpointed(
     ricci_scalar: &Expr,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
+    einstein_tensor_with_engine(registry, chart, metric, ricci, ricci_scalar, &mut Engine::General, checkpoint)
+}
+
+/// `G_ab = R_ab - (1/2) g_ab R`, with the reduction engine chosen by the
+/// caller ([`Engine`]). `Engine::General` reproduces
+/// [`einstein_tensor_checkpointed`] exactly.
+pub fn einstein_tensor_with_engine(
+    registry: &Registry,
+    chart: &Chart,
+    metric: &ComponentTensor,
+    ricci: &Grid,
+    ricci_scalar: &Expr,
+    engine: &mut Engine,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     let mut einstein = Grid::new(n, 2);
     for_each_index_tuple(n, 2, |idx| {
@@ -1306,7 +1256,8 @@ pub fn einstein_tensor_checkpointed(
         }
         let g_ab = metric.get(registry, idx)?;
         let value = ricci.get(idx) - (g_ab * ricci_scalar.clone()) / Expr::int(2);
-        einstein.set(idx, normalize(&value));
+        let reduced = engine.reduce(&value, || format!("G_{idx:?}"), checkpoint)?;
+        einstein.set(idx, reduced);
         Ok(())
     })?;
     Ok(einstein)
@@ -1335,22 +1286,7 @@ pub fn kretschmann_checkpointed(
     ginv: &Grid,
     checkpoint: Checkpoint,
 ) -> Result<Expr, ComponentError> {
-    let raised0 = raise_index_checkpointed(chart, riemann_cov, ginv, 0, checkpoint)?;
-    let raised1 = raise_index_checkpointed(chart, &raised0, ginv, 1, checkpoint)?;
-    let raised2 = raise_index_checkpointed(chart, &raised1, ginv, 2, checkpoint)?;
-    let riemann_contra = raise_index_checkpointed(chart, &raised2, ginv, 3, checkpoint)?;
-
-    let n = chart.dim();
-    let mut sum = Expr::zero();
-    for_each_index_tuple(n, 4, |idx| {
-        if checkpoint() {
-            return Err(ComponentError::Cancelled);
-        }
-        let term = riemann_cov.get(idx) * riemann_contra.get(idx);
-        sum = std::mem::replace(&mut sum, Expr::zero()) + term;
-        Ok(())
-    })?;
-    Ok(normalize(&sum))
+    kretschmann_with_engine(chart, riemann_cov, ginv, &mut Engine::General, checkpoint)
 }
 
 /// `C_abcd`, the Weyl (conformal) tensor, fully covariant (Marco 6 step
@@ -1400,6 +1336,23 @@ pub fn weyl_tensor_checkpointed(
     ricci_scalar: &Expr,
     checkpoint: Checkpoint,
 ) -> Result<Grid, ComponentError> {
+    weyl_tensor_with_engine(registry, chart, metric, riemann_cov, ricci_cov, ricci_scalar, &mut Engine::General, checkpoint)
+}
+
+/// `C_abcd`, the fully covariant Weyl tensor, with the reduction engine
+/// chosen by the caller ([`Engine`]). `Engine::General` reproduces
+/// [`weyl_tensor_checkpointed`] exactly.
+#[allow(clippy::too_many_arguments)]
+pub fn weyl_tensor_with_engine(
+    registry: &Registry,
+    chart: &Chart,
+    metric: &ComponentTensor,
+    riemann_cov: &Grid,
+    ricci_cov: &Grid,
+    ricci_scalar: &Expr,
+    engine: &mut Engine,
+    checkpoint: Checkpoint,
+) -> Result<Grid, ComponentError> {
     let n = chart.dim();
     if n == 2 {
         return Err(ComponentError::WeylUndefinedInDimension2);
@@ -1426,7 +1379,8 @@ pub fn weyl_tensor_checkpointed(
         let trace_term = g_ac * g_bd - g_ad * g_bc;
 
         let value = riemann_cov.get(idx) - correction / denom1.clone() + ricci_scalar.clone() * trace_term / denom2.clone();
-        weyl.set(idx, normalize(&value));
+        let reduced = engine.reduce(&value, || format!("C_{idx:?}"), checkpoint)?;
+        weyl.set(idx, reduced);
         Ok(())
     })?;
     Ok(weyl)
@@ -1457,11 +1411,29 @@ pub fn weyl_squared_checkpointed(
     ginv: &Grid,
     checkpoint: Checkpoint,
 ) -> Result<Expr, ComponentError> {
-    let weyl_cov = weyl_tensor_checkpointed(registry, chart, metric, riemann_cov, ricci_cov, ricci_scalar, checkpoint)?;
-    let raised0 = raise_index_checkpointed(chart, &weyl_cov, ginv, 0, checkpoint)?;
-    let raised1 = raise_index_checkpointed(chart, &raised0, ginv, 1, checkpoint)?;
-    let raised2 = raise_index_checkpointed(chart, &raised1, ginv, 2, checkpoint)?;
-    let weyl_contra = raise_index_checkpointed(chart, &raised2, ginv, 3, checkpoint)?;
+    weyl_squared_with_engine(registry, chart, metric, riemann_cov, ricci_cov, ricci_scalar, ginv, &mut Engine::General, checkpoint)
+}
+
+/// `C_abcd C^abcd`, with the reduction engine chosen by the caller
+/// ([`Engine`]). `Engine::General` reproduces
+/// [`weyl_squared_checkpointed`] exactly.
+#[allow(clippy::too_many_arguments)]
+pub fn weyl_squared_with_engine(
+    registry: &Registry,
+    chart: &Chart,
+    metric: &ComponentTensor,
+    riemann_cov: &Grid,
+    ricci_cov: &Grid,
+    ricci_scalar: &Expr,
+    ginv: &Grid,
+    engine: &mut Engine,
+    checkpoint: Checkpoint,
+) -> Result<Expr, ComponentError> {
+    let weyl_cov = weyl_tensor_with_engine(registry, chart, metric, riemann_cov, ricci_cov, ricci_scalar, engine, checkpoint)?;
+    let raised0 = raise_index_with_engine(chart, &weyl_cov, ginv, 0, engine, checkpoint)?;
+    let raised1 = raise_index_with_engine(chart, &raised0, ginv, 1, engine, checkpoint)?;
+    let raised2 = raise_index_with_engine(chart, &raised1, ginv, 2, engine, checkpoint)?;
+    let weyl_contra = raise_index_with_engine(chart, &raised2, ginv, 3, engine, checkpoint)?;
 
     let n = chart.dim();
     let mut sum = Expr::zero();
@@ -1473,7 +1445,7 @@ pub fn weyl_squared_checkpointed(
         sum = std::mem::replace(&mut sum, Expr::zero()) + term;
         Ok(())
     })?;
-    Ok(normalize(&sum))
+    engine.reduce(&sum, || "C_abcd C^abcd".to_string(), checkpoint)
 }
 
 /// Converts a raw `Grid` into a [`ComponentTensor`] stored under `head`'s

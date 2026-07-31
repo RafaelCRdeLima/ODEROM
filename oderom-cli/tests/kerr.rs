@@ -21,8 +21,9 @@
 
 use oderom_cli::parser::parse_model;
 use oderom_components::curvature::{
-    christoffel_localized, kretschmann_localized, localization_generators, lower_first_index_localized, metric_inverse, riemann_mixed_localized, verify_metric_inverse,
+    christoffel_with_engine, kretschmann_with_engine, localization_generators, lower_first_index_with_engine, metric_inverse, riemann_mixed_with_engine, verify_metric_inverse,
 };
+use oderom_components::curvature::Engine;
 use oderom_expr::{diff, normalize, normalize_localized, Expr, LocalizationContext};
 
 fn load_kerr() -> oderom_cli::model::Model {
@@ -93,7 +94,7 @@ fn kerr_christoffel_satisfies_metric_compatibility() {
     let ginv = metric_inverse(&model.registry, chart, g).expect("Kerr's {t,phi} block plus two singleton blocks must invert");
     let seeds = localization_generators(&model.registry, chart, g).expect("localization_generators must succeed for Kerr");
     let mut ctx = LocalizationContext::new(&seeds);
-    let gamma = christoffel_localized(&model.registry, chart, g, &ginv, &mut ctx).expect("christoffel must succeed for Kerr");
+    let gamma = christoffel_with_engine(&model.registry, chart, g, &ginv, &mut Engine::Localized(&mut ctx), &mut || false).expect("christoffel must succeed for Kerr");
 
     let dim = chart.dim() as u8;
     for mu in 0..dim {
@@ -150,10 +151,10 @@ fn kretschmann_of_kerr_from_od_file_matches_closed_form() {
     let ginv = metric_inverse(&model.registry, chart, g).unwrap();
     let seeds = localization_generators(&model.registry, chart, g).unwrap();
     let mut ctx = LocalizationContext::new(&seeds);
-    let gamma = christoffel_localized(&model.registry, chart, g, &ginv, &mut ctx).unwrap();
-    let riem_mixed = riemann_mixed_localized(chart, &gamma, &mut ctx).unwrap();
-    let riem_cov = lower_first_index_localized(&model.registry, chart, &riem_mixed, g, &mut ctx).unwrap();
-    let k = kretschmann_localized(chart, &riem_cov, &ginv, &mut ctx).unwrap();
+    let gamma = christoffel_with_engine(&model.registry, chart, g, &ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let riem_mixed = riemann_mixed_with_engine(chart, &gamma, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let riem_cov = lower_first_index_with_engine(&model.registry, chart, &riem_mixed, g, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
+    let k = kretschmann_with_engine(chart, &riem_cov, &ginv, &mut Engine::Localized(&mut ctx), &mut || false).unwrap();
 
     // K = 48*M^2*(r^2-a^2*cos(theta)^2)*((r^2+a^2*cos(theta)^2)^2 -
     // 16*r^2*a^2*cos(theta)^2) / (r^2+a^2*cos(theta)^2)^6 -- the closed
