@@ -693,13 +693,30 @@ fn reciprocal_pow(base_lr: &LocalizedRational, m: u32, ctx: &mut LocalizationCon
 /// expected value, found by that test failing on shape while the
 /// numeric value already agreed).
 fn localized_to_expr(lr: &LocalizedRational, ctx: &mut LocalizationContext) -> Expr {
-    let num_expr = poly_to_expr(&lr.num, &ctx.table);
+    let mut num = lr.num.clone();
     let mut combined_den = lr.overflow.clone();
     for &(idx, exp) in &lr.den {
         if exp > 0 {
             combined_den = combined_den.mul(&ctx.generators[idx].poly.pow(exp, &mut ctx.table), &mut ctx.table);
         }
     }
+    // Sign convention, matched to the general engine's: a denominator
+    // whose leading (canonically first) term is negative gets negated,
+    // with the numerator negated to compensate. `num/den` and
+    // `-num/-den` are the same value, so this is purely a canonical-form
+    // choice -- but it has to be the *same* choice both engines make, or
+    // switching engines silently changes rendered output for identical
+    // mathematics. Found by the CLI differential test
+    // (`oderom-cli/tests/engine_differential.rs`): Schwarzschild's
+    // `Gamma^t_tr` came out `-M/(2*M*r - r^2)` from the general engine
+    // and `M/(-2*M*r + r^2)` from this one -- equal in value, different
+    // byte for byte, which would make any golden CLI test depend on
+    // which engine happened to run.
+    if combined_den.sorted_terms(&ctx.table).first().is_some_and(|t| t.coeff.is_negative()) {
+        combined_den = combined_den.neg();
+        num = num.neg();
+    }
+    let num_expr = poly_to_expr(&num, &ctx.table);
     if combined_den.is_literal_one() {
         return num_expr;
     }

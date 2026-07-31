@@ -152,6 +152,21 @@ pub(crate) fn expr_to_rational(e: &Expr, table: &mut AtomTable) -> RationalFunct
 }
 
 fn rational_to_expr(rf: &RationalFunction, table: &AtomTable) -> Expr {
+    // Sign convention: a denominator whose leading (canonically first)
+    // term is negative gets negated, with the numerator negated to
+    // compensate -- `num/den` and `-num/-den` are the same value, so
+    // this is a canonical-form choice, not a semantic one. Without it
+    // this engine is inconsistent with itself: Schwarzschild's
+    // `Gamma^t_tr` came out `-M/(2*M*r - r^2)` (positive-leading
+    // denominator) while `R_trtr` came out `2*M/(-r^3)` (negative), and
+    // the localized engine -- which does normalize -- then disagreed
+    // byte for byte on the same mathematics
+    // (`oderom-cli/tests/engine_differential.rs`).
+    let rf = if rf.den.sorted_terms(table).first().is_some_and(|t| t.coeff.is_negative()) {
+        &RationalFunction { num: rf.num.neg(), den: rf.den.neg() }
+    } else {
+        rf
+    };
     let num = poly_to_expr(&rf.num, table);
     // Division by literal zero is left opaque, same as the old engine's
     // scalar_pow ("0^negative: leave opaque rather than guess") --

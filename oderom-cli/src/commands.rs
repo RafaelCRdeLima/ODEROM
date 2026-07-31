@@ -118,8 +118,18 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, CliError> 
             "--metric" => metric = Some(args.next().ok_or(CliError::Usage)?),
             "--connection" => connection = Some(args.next().ok_or(CliError::Usage)?),
             "--param" => param = Some(args.next().ok_or(CliError::Usage)?),
-            "--engine" => {
-                engine = match args.next().ok_or(CliError::Usage)?.as_str() {
+            // Both spellings: `--engine localized` matches every other
+            // flag in this CLI, and `--engine=localized` is what the
+            // spec (and habit) writes. Accepting only one of the two
+            // turns a typo into a usage error that reads like the
+            // feature is missing.
+            _ if a == "--engine" || a.starts_with("--engine=") => {
+                let value = if let Some(v) = a.strip_prefix("--engine=") {
+                    v.to_string()
+                } else {
+                    args.next().ok_or(CliError::Usage)?
+                };
+                engine = match value.as_str() {
                     "auto" => EngineChoice::Auto,
                     "general" => EngineChoice::General,
                     "localized" => EngineChoice::Localized,
