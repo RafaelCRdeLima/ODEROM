@@ -2469,6 +2469,7 @@ dependencies = [
  "oderom-canon",
  "oderom-components",
  "oderom-core",
+ "oderom-egraph",
  "oderom-expr",
  "smallvec",
  "thiserror 1.0.69",

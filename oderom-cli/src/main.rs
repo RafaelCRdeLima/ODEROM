@@ -1,4 +1,5 @@
 use oderom_cli::commands;
+use oderom_core::{Monomial, Registry, Scalar};
 use oderom_cli::error::CliError;
 use oderom_cli::parser;
 use std::time::Instant;
@@ -15,6 +16,7 @@ fn run() -> Result<(), CliError> {
     let subcommand = args.next().ok_or(CliError::Usage)?;
     match subcommand.as_str() {
         "canon" => run_canon(args),
+        "simplify" => run_simplify(args),
         "christoffel" => commands::christoffel_cmd(commands::parse_args(args)?),
         "riemann" => commands::riemann_cmd(commands::parse_args(args)?),
         "ricci" => commands::ricci_cmd(commands::parse_args(args)?),
@@ -111,6 +113,116 @@ fn run_canon(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
             );
         }
     }
+    Ok(())
+}
+
+/// Collects like terms in an extracted sum: two monomials that differ
+/// only by their rational coefficient are one term, and a group whose
+/// coefficients cancel disappears entirely.
+///
+/// The e-graph canonicalizes each monomial and can prove multi-term
+/// identities, but its extraction returns whichever `Polynomial` has
+/// fewest *terms* -- it never adds coefficients, so `R[a,b,c,d] +
+/// R[b,a,c,d]` came back as `R[a,b,c,d] + -1 R[a,b,c,d]` rather than
+/// `0`. That is the single most basic simplification a reader would
+/// try first (it is just Riemann's declared antisymmetry), so doing it
+/// here is what makes `simplify` mean what its name says. Grouping is
+/// by the monomial with its coefficient normalized away -- `Monomial`
+/// already derives `Eq`/`Hash` over its full contraction structure, so
+/// this is exact structural identity, never a string comparison.
+fn collect_like_terms(terms: &[Monomial], registry: &Registry) -> Result<Vec<Monomial>, CliError> {
+    let mut order: Vec<Monomial> = Vec::new();
+    let mut totals: Vec<Scalar> = Vec::new();
+    for term in terms {
+        let key = Monomial::try_new(Scalar::ONE, term.factors().into(), term.contractions().clone(), term.free().to_vec(), registry)?;
+        match order.iter().position(|k| k == &key) {
+            Some(i) => totals[i] = totals[i] + term.coeff(),
+            None => {
+                order.push(key);
+                totals.push(term.coeff());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (key, total) in order.into_iter().zip(totals) {
+        if total == Scalar::ZERO {
+            continue;
+        }
+        out.push(Monomial::try_new(total, key.factors().into(), key.contractions().clone(), key.free().to_vec(), registry)?);
+    }
+    Ok(out)
+}
+
+/// `oderom simplify [--prelude PATH] [--bianchi HEAD]... "<sum of monomials>"`
+/// -- the abstract-index counterpart of the component-level subcommands:
+/// it manipulates a tensor *equation's* left-hand side symbolically,
+/// with no chart and no metric anywhere in sight.
+///
+/// Where `canon` canonicalizes a single monomial (Marco 1, pure
+/// slot-permutation symmetry), this reduces a *sum* of them through the
+/// e-graph (Marco 4) -- which is where multi-term identities live,
+/// because they provably cannot be slot symmetries: Bianchi's cyclic
+/// permutation has order 3 and Riemann's slot-symmetry group has order
+/// 8, and 3 does not divide 8.
+///
+/// **`--bianchi HEAD` is deliberately explicit, never inferred.** The
+/// first Bianchi identity is *not* a consequence of having Riemann's
+/// slot symmetries -- a tensor can carry the pair antisymmetries and the
+/// pair swap without satisfying the cyclic identity (that is exactly why
+/// DESIGN-M4.md registers it "as an independent fact"). Inferring it
+/// from the declared symmetry would be asserting a theorem the engine
+/// cannot check, on the user's behalf. Requiring the flag also makes the
+/// pedagogy visible: running the same sum with and without it shows,
+/// concretely, that Bianchi is an extra axiom rather than bookkeeping.
+fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> {
+    let mut prelude_path = "prelude.od".to_string();
+    let mut expr: Option<String> = None;
+    let mut bianchi_heads: Vec<String> = Vec::new();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--prelude" => prelude_path = args.next().ok_or(CliError::Usage)?,
+            "--bianchi" => bianchi_heads.push(args.next().ok_or(CliError::Usage)?),
+            _ => expr = Some(a),
+        }
+    }
+    let expr = expr.ok_or(CliError::Usage)?;
+
+    let prelude_src =
+        std::fs::read_to_string(&prelude_path).map_err(|source| CliError::Io { path: prelude_path.clone(), source })?;
+    let model = parser::parse_model(&prelude_src)?;
+
+    let terms = parser::parse_polynomial(&expr, &model.registry)?;
+
+    let mut egraph = oderom_egraph::EGraph::new();
+    let ids: smallvec::SmallVec<[oderom_egraph::EClassId; 4]> =
+        terms.iter().map(|m| egraph.add_monomial(&model.registry, m)).collect();
+    let root = egraph.add(oderom_egraph::ENode::Sum(ids));
+
+    for name in &bianchi_heads {
+        let head = model.registry.lookup_head(name)?;
+        oderom_egraph::apply_bianchi(&mut egraph, &model.registry, head);
+    }
+
+    let start = Instant::now();
+    let reduced = oderom_egraph::extract(&mut egraph, root);
+    let collected = collect_like_terms(&reduced.terms, &model.registry)?;
+    let elapsed = start.elapsed();
+
+    if collected.is_empty() {
+        println!("0");
+    } else {
+        let rendered: Vec<String> =
+            collected.iter().map(|m| parser::format_monomial(m, &model.registry)).collect();
+        println!("{}", rendered.join(" + "));
+    }
+    eprintln!(
+        "({} termo{} -> {} termo{}, {:.3} ms)",
+        terms.len(),
+        if terms.len() == 1 { "" } else { "s" },
+        collected.len(),
+        if collected.len() == 1 { "" } else { "s" },
+        elapsed.as_secs_f64() * 1000.0
+    );
     Ok(())
 }
 

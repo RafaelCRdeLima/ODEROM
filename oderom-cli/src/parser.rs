@@ -1223,6 +1223,77 @@ fn build_monomial(
 /// in the representation (see `oderom-core`), so this invents fresh
 /// letters for them on the way out -- a one-way, purely cosmetic
 /// projection, not a "rename" of anything the data model stores.
+/// Splits a sum of tensor monomials into its terms, each parsed by the
+/// existing, already-tested [`parse_monomial`] -- deliberately *not* a
+/// second expression grammar. The monomial grammar has no parentheses
+/// and no infix operator other than juxtaposition (see
+/// [`parse_monomial`]), so every `+`/`-` in the source is necessarily
+/// at top level and a split on them is exact, not a heuristic that
+/// could mis-handle nesting.
+///
+/// Each term keeps its own sign, since `parse_monomial` already accepts
+/// a leading `+`/`-` and a rational coefficient (`-3/4 R[a,b]`). A `-`
+/// can therefore never be confused with the `/` of a coefficient: `/`
+/// only ever appears *between two integers* inside a coefficient, and
+/// this split never looks inside one.
+///
+/// Empty input, or a trailing operator with nothing after it, is a
+/// parse error rather than a silently-dropped term.
+pub fn parse_polynomial(src: &str, registry: &Registry) -> Result<Vec<Monomial>, CliError> {
+    let mut terms = Vec::new();
+    let mut current = String::new();
+    for (i, ch) in src.char_indices() {
+        // A sign starts a new term only if a *monomial* precedes it.
+        // Nothing at all (start of input) or a bare sign already
+        // collected (`... + -1 R[a,b]`, which the renderer itself emits
+        // for a negative coefficient) both mean this sign belongs to the
+        // term being built, which `parse_monomial` handles via its own
+        // leading-sign and coefficient parsing.
+        let pending = current.trim();
+        if (ch == '+' || ch == '-') && !pending.is_empty() && pending != "+" && pending != "-" {
+            terms.push(std::mem::take(&mut current));
+            current.push(ch);
+        } else {
+            let _ = i;
+            current.push(ch);
+        }
+    }
+    if !current.trim().is_empty() {
+        terms.push(current);
+    }
+    if terms.is_empty() {
+        return Err(CliError::Parse { message: "expressao vazia: esperava ao menos um monomio tensorial".to_string(), position: None });
+    }
+    let mut parsed = Vec::with_capacity(terms.len());
+    for term in &terms {
+        // Fold any run of leading signs into one, so `+ -1 R[a,b]` --
+        // which is exactly what this tool's own output looks like for a
+        // negative coefficient, and therefore what a reader will paste
+        // straight back in -- reaches `parse_monomial` as `- 1 R[a,b]`.
+        // `parse_monomial` accepts a single leading sign, by design; the
+        // doubling is an artifact of splitting a sum, so it is this
+        // function's job to undo, not that grammar's to grow for.
+        let mut negative = false;
+        let mut rest = term.trim();
+        loop {
+            if let Some(r) = rest.strip_prefix('-') {
+                negative = !negative;
+                rest = r.trim_start();
+            } else if let Some(r) = rest.strip_prefix('+') {
+                rest = r.trim_start();
+            } else {
+                break;
+            }
+        }
+        if rest.is_empty() {
+            return Err(CliError::Parse { message: format!("operador `{}` sem monomio depois dele", term.trim()), position: None });
+        }
+        let normalized = if negative { format!("-{rest}") } else { rest.to_string() };
+        parsed.push(parse_monomial(&normalized, registry)?);
+    }
+    Ok(parsed)
+}
+
 pub fn format_monomial(m: &Monomial, registry: &Registry) -> String {
     let mut labels: HashMap<SlotId, String> = HashMap::new();
     for (slot, label) in m.free() {
