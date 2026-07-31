@@ -112,13 +112,102 @@ fn r_abab_and_r_cdcd_are_identical_dummies_are_edges_not_names() {
 
 /// `R[a,b,c,d] g[a,c] g[b,d]` reduces to `R[a,b,a,b]` only by substituting
 /// through the metric (index lowering), which is explicit-metric algebra:
-/// Marco 2 per DESIGN.md, not a permutation symmetry a coset search can
-/// find (it would need to change the term's factor count). Confirmed with
-/// the user 2026-07-19; left `#[ignore]`d rather than special-cased.
+/// not a permutation symmetry a coset search can find, since it changes
+/// the term's factor count. Left `#[ignore]`d through Marco 1 for exactly
+/// that reason, and no longer ignored: `Monomial::eliminate_metric`
+/// performs the substitution as contraction-graph surgery *before*
+/// canonicalization, so the coset search still only ever does what it
+/// can do. The metric head is declared by the caller, never inferred
+/// from a rank-2 symmetric shape.
 #[test]
-#[ignore = "requires metric-contraction substitution, out of Marco 1 scope per DESIGN.md; confirmed with user"]
 fn riemann_contracted_through_explicit_metric_reduces_like_direct_contraction() {
-    unimplemented!()
+    let p = prelude();
+    let g = p.registry.lookup_head("g").unwrap();
+
+    // R[a,b,c,d] g[a,c] g[b,d]: three factors, with every one of the
+    // metrics' slots contracted into Riemann.
+    let factors: SmallVec<[Factor; 4]> =
+        smallvec::smallvec![Factor { head: p.r }, Factor { head: g }, Factor { head: g }];
+    let contractions = Matching::try_new([
+        (SlotId { factor: 0, slot: 0 }, SlotId { factor: 1, slot: 0 }), // a
+        (SlotId { factor: 0, slot: 2 }, SlotId { factor: 1, slot: 1 }), // c
+        (SlotId { factor: 0, slot: 1 }, SlotId { factor: 2, slot: 0 }), // b
+        (SlotId { factor: 0, slot: 3 }, SlotId { factor: 2, slot: 1 }), // d
+    ])
+    .unwrap();
+    let through_metric =
+        Monomial::try_new(Scalar::ONE, factors, contractions, vec![], &p.registry).unwrap();
+
+    // R[a,b,a,b]: the same tensor written with the contractions taken
+    // directly, no metric factor at all.
+    let direct_factors: SmallVec<[Factor; 4]> = smallvec::smallvec![Factor { head: p.r }];
+    let direct_contractions = Matching::try_new([
+        (SlotId { factor: 0, slot: 0 }, SlotId { factor: 0, slot: 2 }),
+        (SlotId { factor: 0, slot: 1 }, SlotId { factor: 0, slot: 3 }),
+    ])
+    .unwrap();
+    let direct =
+        Monomial::try_new(Scalar::ONE, direct_factors, direct_contractions, vec![], &p.registry).unwrap();
+
+    let eliminated = through_metric.eliminate_metric(g, &p.registry).unwrap();
+    assert_eq!(eliminated.factors().len(), 1, "both metric factors should be gone");
+
+    let a = expect_value(canonicalize(&eliminated, &p.registry).unwrap());
+    let b = expect_value(canonicalize(&direct, &p.registry).unwrap());
+    assert_eq!(a.monomial.contractions(), b.monomial.contractions());
+    assert_eq!(a.monomial.coeff(), b.monomial.coeff());
+    assert_eq!(a.sign, b.sign);
+}
+
+/// The lowering case on its own: `g[a,b] R[b,c,d,e]` is `R[a,c,d,e]` --
+/// the metric renames a free index rather than contracting two slots
+/// together. Separated from the test above because it exercises the
+/// other branch of `eliminate_metric` (one slot contracted, one free).
+#[test]
+fn a_metric_with_one_free_slot_renames_the_index_it_lowers() {
+    let p = prelude();
+    let g = p.registry.lookup_head("g").unwrap();
+
+    let factors: SmallVec<[Factor; 4]> = smallvec::smallvec![Factor { head: g }, Factor { head: p.r }];
+    let contractions =
+        Matching::try_new([(SlotId { factor: 0, slot: 1 }, SlotId { factor: 1, slot: 0 })]).unwrap();
+    let free_idx = vec![
+        free(0, 0, "a"),
+        free(1, 1, "c"),
+        free(1, 2, "d"),
+        free(1, 3, "e"),
+    ];
+    let lowered = Monomial::try_new(Scalar::ONE, factors, contractions, free_idx, &p.registry)
+        .unwrap()
+        .eliminate_metric(g, &p.registry)
+        .unwrap();
+
+    assert_eq!(lowered.factors().len(), 1, "the metric factor should be gone");
+    assert!(lowered.contractions().is_empty(), "nothing is contracted once the metric is removed");
+    let mut labels: Vec<&str> = lowered.free().iter().map(|(_, l)| l.name()).collect();
+    labels.sort_unstable();
+    assert_eq!(labels, vec!["a", "c", "d", "e"], "the `a` label must have moved onto Riemann's first slot");
+}
+
+/// A metric that is not contracted with anything (`g[a,b]` standing
+/// alone) has nothing to identify, so it must survive untouched -- the
+/// negative control that keeps `eliminate_metric` from being a rule that
+/// just deletes metrics.
+#[test]
+fn a_free_standing_metric_is_left_alone() {
+    let p = prelude();
+    let g = p.registry.lookup_head("g").unwrap();
+    let factors: SmallVec<[Factor; 4]> = smallvec::smallvec![Factor { head: g }];
+    let m = Monomial::try_new(
+        Scalar::ONE,
+        factors,
+        Matching::default(),
+        vec![free(0, 0, "a"), free(0, 1, "b")],
+        &p.registry,
+    )
+    .unwrap();
+    let after = m.eliminate_metric(g, &p.registry).unwrap();
+    assert_eq!(after, m, "a bare g[a,b] has nothing to eliminate");
 }
 
 #[test]

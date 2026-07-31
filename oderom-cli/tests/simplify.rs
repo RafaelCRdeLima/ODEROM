@@ -142,3 +142,72 @@ fn bianchi_on_an_undeclared_head_is_a_clean_error() {
     assert!(!ok, "an undeclared --bianchi head must be an error");
     assert!(!err.is_empty());
 }
+
+// ---------------------------------------------------------------------
+// Metric elimination (index raising/lowering). This is the operation
+// DESIGN.md records as out of Marco 1's reach -- it changes a term's
+// factor count, which no permutation-symmetry coset search can do -- and
+// it is what makes `simplify` able to manipulate index placement rather
+// than only reorder slots.
+// ---------------------------------------------------------------------
+
+/// The exact case Marco 1's acceptance table carried as permanently
+/// `#[ignore]`d: `R[a,b,c,d] g[a,c] g[b,d]` is `R[a,b,a,b]`. Now
+/// reachable from the command line.
+#[test]
+fn a_metric_contracted_into_riemann_becomes_a_direct_self_contraction() {
+    let (ok, out, err) = simplify(&["--metric", "g", "R[a,b,c,d] g[a,c] g[b,d]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "R[a,b,a,b]");
+}
+
+/// Index lowering proper: the metric moves a free label onto the slot it
+/// was contracted with, rather than joining two slots together.
+#[test]
+fn a_metric_lowers_a_free_index_onto_the_slot_it_contracts() {
+    let (ok, out, err) = simplify(&["--metric", "g", "g[a,b] R[b,c,d,e]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "R[a,c,d,e]");
+}
+
+/// Without `--metric` the very same input must keep its metric factors:
+/// a symmetric rank-2 head is not automatically a metric, and rewriting
+/// through one nobody declared would be using an unstated fact. This is
+/// the negative control for the whole feature.
+#[test]
+fn metrics_are_not_eliminated_unless_declared() {
+    let (ok, out, err) = simplify(&["R[a,b,c,d] g[a,c] g[b,d]"]);
+    assert!(ok, "{err}");
+    assert!(out.contains("g["), "the metric must survive when not declared: {out}");
+}
+
+/// A metric with nothing contracted into it has nothing to identify, so
+/// it survives even when declared -- `eliminate_metric` is not a rule
+/// that simply deletes metric factors.
+#[test]
+fn a_free_standing_metric_survives_even_when_declared() {
+    let (ok, out, err) = simplify(&["--metric", "g", "g[a,b]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "g[a,b]");
+}
+
+/// A metric traced against itself is the slot dimension: `g^a_a = n`,
+/// and this prelude's `TM` has dimension 4. The result is a bare
+/// coefficient with no factors left, which must render without a
+/// trailing separator so it still parses back in.
+#[test]
+fn a_metric_traced_against_itself_is_the_dimension() {
+    let (ok, out, err) = simplify(&["--metric", "g", "g[a,a]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "4");
+}
+
+/// Metric elimination composes with the symmetry reasoning that follows
+/// it: after the metrics go, the two terms are related by Riemann's own
+/// pair antisymmetry and cancel.
+#[test]
+fn elimination_composes_with_the_symmetry_cancellation_that_follows() {
+    let (ok, out, err) = simplify(&["--metric", "g", "R[a,b,c,d] g[a,c] g[b,d] + R[b,a,c,d] g[a,c] g[b,d]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}

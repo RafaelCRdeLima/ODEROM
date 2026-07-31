@@ -181,6 +181,129 @@ impl Monomial {
         Ok(Monomial { coeff, factors, contractions, free })
     }
 
+    /// Eliminates every removable factor of `metric` from this monomial,
+    /// which is what index raising/lowering *is* at the contraction-graph
+    /// level: a metric contracted with an index does not compute
+    /// anything, it identifies two slots. `R[a,b,c,d] g[a,c]` is the same
+    /// tensor as `R` with its first and third slots contracted with each
+    /// other -- the metric factor is scaffolding, and removing it is the
+    /// step DESIGN.md records as out of Marco 1's scope precisely because
+    /// it changes the term's *factor count*, which no permutation-symmetry
+    /// coset search can do.
+    ///
+    /// `metric` is a caller-declared [`HeadId`], never inferred: a
+    /// symmetric rank-2 head is not automatically a metric, and treating
+    /// one as such would silently rewrite a term using a fact nobody
+    /// stated. (Same discipline as the first Bianchi identity, which
+    /// `oderom-egraph` also requires be declared rather than deduced from
+    /// slot symmetry.)
+    ///
+    /// Four shapes per metric factor, by how its two slots are used:
+    /// - both contracted, to two *other* slots: drop the factor, contract
+    ///   those two slots directly with each other;
+    /// - one contracted to some slot `s`, the other free with label `L`:
+    ///   drop the factor, `s` becomes free carrying `L` (this is the
+    ///   lowering/raising case, `g[a,b] T[b] = T[a]`);
+    /// - both slots contracted *with each other* (`g` traced against
+    ///   itself): drop the factor and multiply the coefficient by the
+    ///   slot dimension, since that contraction is `g^a_a = n`;
+    /// - both free (a bare `g[a,b]` with nothing to identify): left
+    ///   alone, since there is nothing to eliminate.
+    ///
+    /// Returns the monomial unchanged when `metric` does not occur, so a
+    /// caller can apply this unconditionally.
+    pub fn eliminate_metric(&self, metric: HeadId, registry: &Registry) -> Result<Monomial, CoreError> {
+        let mut coeff = self.coeff;
+        let mut factors = self.factors.clone();
+        let mut pairs: Vec<(SlotId, SlotId)> = self.contractions.pairs().to_vec();
+        let mut free: Vec<(SlotId, AbstractIndex)> = self.free.clone();
+
+        loop {
+            // The first metric factor that can actually be removed --
+            // recomputed each pass because removing one renumbers the rest.
+            let target = (0..factors.len()).find(|&k| {
+                if factors[k].head != metric {
+                    return false;
+                }
+                let s0 = SlotId { factor: k as u16, slot: 0 };
+                let s1 = SlotId { factor: k as u16, slot: 1 };
+                let both_free = free.iter().any(|(s, _)| *s == s0) && free.iter().any(|(s, _)| *s == s1);
+                !both_free
+            });
+            let Some(k) = target else { break };
+            let kf = k as u16;
+            let s0 = SlotId { factor: kf, slot: 0 };
+            let s1 = SlotId { factor: kf, slot: 1 };
+
+            // Partner of a metric slot within the contraction graph, if any.
+            let partner = |slot: SlotId, pairs: &[(SlotId, SlotId)]| -> Option<SlotId> {
+                pairs.iter().find_map(|&(a, b)| {
+                    if a == slot {
+                        Some(b)
+                    } else if b == slot {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+            };
+            let p0 = partner(s0, &pairs);
+            let p1 = partner(s1, &pairs);
+
+            // Drop every pair touching this factor; whatever survives is
+            // re-linked below.
+            pairs.retain(|&(a, b)| a.factor != kf && b.factor != kf);
+
+            match (p0, p1) {
+                // Traced against itself: `g^a_a = n`.
+                (Some(x), Some(y)) if x == s1 && y == s0 => {
+                    let dim = registry.head(metric).slots[0].dim;
+                    coeff = coeff * Scalar::new(dim as i64, 1);
+                }
+                // Both slots reach elsewhere: they were only ever joined
+                // through the metric, so join them directly.
+                (Some(x), Some(y)) => pairs.push((x, y)),
+                // One contracted, one free: the free label moves onto the
+                // slot the metric was contracted with.
+                (Some(x), None) => {
+                    let label = free
+                        .iter()
+                        .find(|(s, _)| *s == s1)
+                        .map(|(_, l)| l.clone())
+                        .expect("a metric slot is either contracted or free, and this one is not contracted");
+                    free.retain(|(s, _)| *s != s1);
+                    free.push((x, label));
+                }
+                (None, Some(y)) => {
+                    let label = free
+                        .iter()
+                        .find(|(s, _)| *s == s0)
+                        .map(|(_, l)| l.clone())
+                        .expect("a metric slot is either contracted or free, and this one is not contracted");
+                    free.retain(|(s, _)| *s != s0);
+                    free.push((y, label));
+                }
+                // Both free -- excluded by `target`'s own filter above.
+                (None, None) => unreachable!("a both-free metric factor is never selected for removal"),
+            }
+
+            // Removing factor `k` shifts every later factor down one, so
+            // every SlotId naming one has to follow.
+            factors.remove(k);
+            let shift = |s: SlotId| -> SlotId {
+                if s.factor > kf {
+                    SlotId { factor: s.factor - 1, slot: s.slot }
+                } else {
+                    s
+                }
+            };
+            pairs = pairs.into_iter().map(|(a, b)| (shift(a), shift(b))).collect();
+            free = free.into_iter().map(|(s, l)| (shift(s), l)).collect();
+        }
+
+        Monomial::try_new(coeff, factors, Matching::try_new(pairs)?, free, registry)
+    }
+
     pub fn coeff(&self) -> Scalar {
         self.coeff
     }

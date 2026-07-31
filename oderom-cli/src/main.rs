@@ -178,10 +178,12 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     let mut prelude_path = "prelude.od".to_string();
     let mut expr: Option<String> = None;
     let mut bianchi_heads: Vec<String> = Vec::new();
+    let mut metric_heads: Vec<String> = Vec::new();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--prelude" => prelude_path = args.next().ok_or(CliError::Usage)?,
             "--bianchi" => bianchi_heads.push(args.next().ok_or(CliError::Usage)?),
+            "--metric" => metric_heads.push(args.next().ok_or(CliError::Usage)?),
             _ => expr = Some(a),
         }
     }
@@ -191,7 +193,18 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
         std::fs::read_to_string(&prelude_path).map_err(|source| CliError::Io { path: prelude_path.clone(), source })?;
     let model = parser::parse_model(&prelude_src)?;
 
-    let terms = parser::parse_polynomial(&expr, &model.registry)?;
+    let mut terms = parser::parse_polynomial(&expr, &model.registry)?;
+
+    // Metric elimination runs *before* the e-graph, on each term's
+    // contraction graph: it changes the term's factor count, which is
+    // exactly the operation neither canonicalization nor the e-graph's
+    // own rewrites can perform (DESIGN.md's reason for leaving this out
+    // of Marco 1). Declared, never inferred -- see `--bianchi`.
+    for name in &metric_heads {
+        let head = model.registry.lookup_head(name)?;
+        terms = terms.iter().map(|m| m.eliminate_metric(head, &model.registry)).collect::<Result<Vec<_>, _>>()?;
+    }
+    let terms = terms;
 
     let mut egraph = oderom_egraph::EGraph::new();
     let ids: smallvec::SmallVec<[oderom_egraph::EClassId; 4]> =

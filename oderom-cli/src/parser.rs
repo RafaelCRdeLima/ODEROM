@@ -1318,9 +1318,15 @@ pub fn format_monomial(m: &Monomial, registry: &Registry) -> String {
     }
 
     let mut out = String::new();
-    if m.coeff() != Scalar::ONE {
+    if m.coeff() != Scalar::ONE || m.factors().is_empty() {
         out.push_str(&m.coeff().to_string());
-        out.push(' ');
+        // A factorless monomial *is* its coefficient (`g[a,a]` with the
+        // metric eliminated is the bare dimension), so no separator
+        // follows -- otherwise the rendering carries a trailing space
+        // and no longer round-trips through the parser.
+        if !m.factors().is_empty() {
+            out.push(' ');
+        }
     }
     for (fi, factor) in m.factors().iter().enumerate() {
         let head = registry.head(factor.head);
