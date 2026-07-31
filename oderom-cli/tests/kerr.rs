@@ -173,23 +173,63 @@ fn kretschmann_of_kerr_from_od_file_matches_closed_form() {
     assert!(ctx.fallback_log().is_empty(), "expected zero fallbacks to the general engine, got: {:?}", ctx.fallback_log());
 }
 
-/// Lighter, separate smoke check that `oderom kretschmann
-/// examples/kerr.od` (the actual command line a user runs) completes
-/// and prints something -- not a value check (see the structural test
-/// above for that): pinning an exact stdout string here would be
-/// guessing at a rendering this engine doesn't produce yet. Once
-/// `kretschmann_of_kerr_from_od_file_matches_closed_form` above passes,
-/// this is the place to tighten to `assert_eq!(stdout.trim(), "...")`
-/// against the real rendered form, the same way
-/// `end_to_end.rs::kretschmann_of_schwarzschild_from_a_file_ascii_and_latex_agree`
-/// already does for Schwarzschild.
+/// The deliverable this whole line of work exists for: the actual
+/// command line a user types, `oderom kretschmann examples/kerr.od`,
+/// producing Kerr's closed-form Kretschmann scalar -- not the library
+/// API (that is
+/// `kretschmann_of_kerr_from_od_file_matches_closed_form` above), the
+/// real binary, through the real `.od` file, with the CLI's own engine
+/// routing (`--engine=auto`) picking the localized engine on its own.
+///
+/// Compared against the *same* closed form the API-level test asserts,
+/// rendered through the same `Target::Unicode` path the binary prints
+/// with -- so this is a genuine value check, not the "stdout is
+/// non-empty" placeholder an earlier version of this test had (that
+/// placeholder is exactly the kind of sleeping-test-with-no-teeth this
+/// round's own fixture sweep was looking for).
+///
+/// `#[ignore]`d for cost, not correctness: it needs a raised
+/// `--max-nodes` (Kerr's intermediate `raise_index` grids legitimately
+/// exceed the 20000 default -- a real finding, the default is tuned to
+/// the general engine's smaller intermediates) and runs for minutes.
+/// Run explicitly with:
+///
+/// ```text
+/// cargo test -p oderom-cli --release --test kerr -- --ignored kretschmann_of_kerr_through_the_real_binary
+/// ```
 #[test]
-#[ignore] // blocked by DESIGN-RATIONAL-FORM.md section 7.1, same as above
-fn kretschmann_of_kerr_from_od_file_runs_and_produces_output() {
+#[ignore] // minutes, and needs --max-nodes raised; correctness is asserted, not assumed
+fn kretschmann_of_kerr_through_the_real_binary() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_oderom"))
-        .args(["kretschmann", concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/kerr.od")])
+        .args([
+            "kretschmann",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/kerr.od"),
+            "--max-nodes",
+            "100000000",
+            "--timeout",
+            "600",
+        ])
         .output()
         .expect("failed to run the oderom binary");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert!(!String::from_utf8_lossy(&output.stdout).trim().is_empty());
+
+    // The routing rule must have picked the localized engine by itself,
+    // with no --engine flag: if this ever silently reverts to the
+    // general engine the command would simply never finish, and a test
+    // that only checked the value would hang instead of failing.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("motor: localizado"), "expected the auto rule to select the localized engine, stderr was: {stderr}");
+
+    let m = Expr::var("M");
+    let a = Expr::var("a");
+    let r = Expr::var("r");
+    let theta = Expr::var("theta");
+    let sigma = r.clone().pow(2) + a.clone().pow(2) * theta.clone().cos().pow(2);
+    let expected = normalize(
+        &(Expr::int(48) * m.pow(2) * (r.clone().pow(2) - a.clone().pow(2) * theta.clone().cos().pow(2))
+            * (sigma.clone().pow(2) - Expr::int(16) * r.pow(2) * a.pow(2) * theta.cos().pow(2))
+            * Expr::Pow(Box::new(sigma), -6)),
+    );
+    let expected_text = oderom_core::Render::render(&expected, oderom_core::Target::Unicode);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected_text.trim());
 }
