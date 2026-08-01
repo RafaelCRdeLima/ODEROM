@@ -178,7 +178,12 @@ fn christoffel_and_riemann_of_reissner_nordstrom_stay_fast() {
     let (ok, stdout, stderr) = run(&["christoffel", "tests/fixtures/reissner_nordstrom.od", "--timeout", "5"]);
     assert!(ok, "{stderr}");
     assert!(stdout.contains("Gamma["), "{stdout}");
-    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    // The `--timeout 5` above is what actually enforces "stays fast";
+    // this only checks the process did not outlive its own guardrail, so
+    // it is deliberately looser than that timeout rather than equal to
+    // it (equal made the assertion a second, redundant deadline that
+    // could fire on machine load alone).
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
 }
 
 /// A user caught, by eye, a real bug in a single screenshot

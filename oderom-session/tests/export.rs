@@ -139,7 +139,13 @@ metric g on schw bundle TM {
     let (session, id) = handle.join().expect("worker thread should not panic");
     let elapsed = start.elapsed();
 
-    assert!(elapsed < Duration::from_secs(1), "cancellation took {elapsed:?} -- export introduced an uncancellable path");
+    // Loose on purpose -- the same loose-bound reasoning as
+    // `oderom-session/tests/cancellation.rs`: this discriminates a
+    // gap of orders of magnitude (prompt abort vs. waiting out a
+    // runaway component), so precision buys nothing and costs
+    // robustness -- a 1s bound here reported machine load as a code
+    // defect elsewhere in this workspace.
+    assert!(elapsed < Duration::from_secs(10), "cancellation took {elapsed:?} -- export introduced an uncancellable path");
 
     let entry = session.entries().iter().find(|e| e.id == id).unwrap();
     assert!(matches!(entry.state, EntryState::Cancelled), "expected a Cancelled entry, got something else");

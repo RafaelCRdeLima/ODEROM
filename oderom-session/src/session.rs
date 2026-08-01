@@ -828,7 +828,13 @@ metric g on schw bundle TM {
         let id = session.run_entry_with_context("kretschmann".to_string(), &ctx).unwrap();
         let elapsed = start.elapsed();
 
-        assert!(elapsed < std::time::Duration::from_secs(1), "cancelled query took {elapsed:?} -- did not abort promptly");
+        // Loose on purpose -- the same loose-bound reasoning as
+        // `oderom-session/tests/cancellation.rs`: this discriminates a
+        // gap of orders of magnitude (prompt abort vs. waiting out a
+        // runaway component), so precision buys nothing and costs
+        // robustness -- a 1s bound here reported machine load as a code
+        // defect elsewhere in this workspace.
+        assert!(elapsed < std::time::Duration::from_secs(10), "cancelled query took {elapsed:?} -- did not abort promptly");
         let entry = session.entries().iter().find(|e| e.id == id).unwrap();
         // Etapa 3b: a cancellation is now its own distinct `EntryState`,
         // detected via the typed `CliError::Component(ComponentError::Cancelled)`

@@ -36,6 +36,35 @@ metric g on schw bundle TM {
 }
 ";
 
+/// The bound cancellation must return within. Deliberately loose, and
+/// the looseness is the point.
+///
+/// What this test discriminates is a gap of about four orders of
+/// magnitude: with the deep, inside-`normalize()` checkpoint,
+/// cancellation returns in tens of milliseconds; without it, the
+/// between-component checkpoint is never reached for this metric and
+/// cancellation waits out a single component that runs 60s+. Any
+/// threshold in between separates those two worlds, so precision buys
+/// nothing here and costs robustness.
+///
+/// Two earlier attempts, both recorded because each was wrong in an
+/// instructive way:
+///
+/// 1. A fixed 1s bound. It failed at ~1.45s under `load average` ~6
+///    with the code unchanged (confirmed by A/B against the previous
+///    commit in the same window), i.e. it was measuring the machine.
+/// 2. A budget calibrated as a multiple of a `christoffel` query timed
+///    on the same machine, on the theory that latency and throughput
+///    move together. **Measured false**: in one run calibration was
+///    239ms with 48ms latency, in another 172ms with 1.45s latency --
+///    latency swung 30x while calibration barely moved. Cancellation
+///    latency is not throughput-bound; it depends on where the cancel
+///    lands relative to a checkpoint and on scheduler contention at the
+///    join, neither of which a throughput probe sees.
+///
+/// So: one loose absolute bound, chosen to sit far from both worlds.
+const CANCELLATION_BOUND: Duration = Duration::from_secs(10);
+
 #[test]
 fn cancelling_a_non_reciprocal_metric_mid_flight_aborts_in_under_a_second() {
     let mut session = Session::new();
@@ -60,7 +89,11 @@ fn cancelling_a_non_reciprocal_metric_mid_flight_aborts_in_under_a_second() {
     let (session, id) = handle.join().expect("worker thread should not panic -- run_query catches its own cancellation unwind internally");
     let elapsed = start.elapsed();
 
-    assert!(elapsed < Duration::from_secs(1), "cancellation took {elapsed:?} -- the deep, inside-normalize() checkpoint did not interrupt it promptly");
+    assert!(
+        elapsed < CANCELLATION_BOUND,
+        "cancellation took {elapsed:?}, over the {CANCELLATION_BOUND:?} bound -- the deep, inside-normalize() checkpoint did not interrupt it promptly \
+         (without that checkpoint this waits out a component that runs 60s+, so anything in this range means the checkpoint is gone, not that the machine is busy)"
+    );
 
     let entry = session.entries().iter().find(|e| e.id == id).unwrap();
     // Etapa 3b: a distinct `Cancelled` state now, not a `Failed` whose

@@ -162,19 +162,43 @@ mod tests {
         });
     }
 
-    /// Measured, not estimated, per this project's own convention
-    /// (`ODEROM_TRACE_SUBRES`, `diagnostic_cancel_latency.rs`, ...):
-    /// an uncancelled `check_cancelled()` is a thread-local lookup plus
-    /// one `Relaxed` atomic load, called once per subresultant PRS
-    /// iteration / `poly_gcd_bounded` recursion / `normalize()` entry --
-    /// all of which do orders of magnitude more work than that per call,
-    /// so this asserts a generous upper bound (catches a regression like
-    /// an accidental lock or allocation creeping in) rather than pinning
-    /// an exact number that would be flaky across machines.
+    /// `check_cancelled()` must stay a thread-local lookup plus one
+    /// `Relaxed` atomic load -- the regression this guards against is a
+    /// lock or an allocation creeping into a function called once per
+    /// subresultant-PRS iteration, per `poly_gcd_bounded` recursion and
+    /// per `normalize()` entry.
+    ///
+    /// Asserted as a **ratio against a bare `Relaxed` load measured in
+    /// the same loop on the same machine**, not as an absolute
+    /// nanosecond bound. The previous version asserted `< 100ns/call`
+    /// and described the margin as "orders of magnitude"; measured, it
+    /// was ~46ns/call in a debug build, i.e. barely 2x, and it failed
+    /// outright inside a full `cargo test --workspace` run under load --
+    /// reporting machine contention as a code defect. That is the third
+    /// absolute-time threshold in this codebase to do so.
+    ///
+    /// A ratio is the right instrument *here* specifically because this
+    /// is a tight-loop microbenchmark, so it genuinely is throughput-
+    /// bound and the baseline scales with whatever is slowing the
+    /// machine. That reasoning does not transfer to every timing test:
+    /// `oderom-session`'s cancellation-latency test was tried this way
+    /// and it did not work, because latency there depends on scheduler
+    /// contention rather than throughput (see its own comment).
     #[test]
     fn check_cancelled_overhead_is_negligible() {
-        let token = CancelToken::new();
+        use std::sync::atomic::{AtomicBool, Ordering};
         const N: u32 = 2_000_000;
+
+        // Baseline: the bare atomic load `check_cancelled` is allowed to
+        // cost, with no thread-local access around it.
+        let baseline_flag = AtomicBool::new(false);
+        let start = std::time::Instant::now();
+        for _ in 0..N {
+            std::hint::black_box(baseline_flag.load(Ordering::Relaxed));
+        }
+        let baseline = start.elapsed().as_nanos() as f64 / N as f64;
+
+        let token = CancelToken::new();
         let elapsed = run_cancellable(token, || {
             let start = std::time::Instant::now();
             for _ in 0..N {
@@ -185,8 +209,18 @@ mod tests {
         .ok()
         .unwrap();
         let per_call_ns = elapsed.as_nanos() as f64 / N as f64;
-        eprintln!("check_cancelled: {per_call_ns:.2}ns/call over {N} calls ({elapsed:?} total)");
-        assert!(per_call_ns < 100.0, "check_cancelled got unexpectedly expensive: {per_call_ns:.2}ns/call");
+
+        // Generous: a lock or an allocation would be one to two orders
+        // of magnitude over a plain relaxed load, so this catches the
+        // regression while leaving room for the thread-local access and
+        // for measurement noise.
+        const MAX_RATIO: f64 = 25.0;
+        let ratio = per_call_ns / baseline.max(0.05);
+        eprintln!("check_cancelled: {per_call_ns:.2}ns/call, baseline load {baseline:.2}ns/call, ratio {ratio:.1}x (limit {MAX_RATIO}x)");
+        assert!(
+            ratio < MAX_RATIO,
+            "check_cancelled got unexpectedly expensive: {per_call_ns:.2}ns/call against a {baseline:.2}ns/call bare atomic load ({ratio:.1}x) -- a lock or allocation likely crept in"
+        );
     }
 
     #[test]
