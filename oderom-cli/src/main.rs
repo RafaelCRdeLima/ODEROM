@@ -179,11 +179,19 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     let mut expr: Option<String> = None;
     let mut bianchi_heads: Vec<String> = Vec::new();
     let mut metric_heads: Vec<String> = Vec::new();
+    let mut compatible_heads: Vec<String> = Vec::new();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--prelude" => prelude_path = args.next().ok_or(CliError::Usage)?,
             "--bianchi" => bianchi_heads.push(args.next().ok_or(CliError::Usage)?),
             "--metric" => metric_heads.push(args.next().ok_or(CliError::Usage)?),
+            // `nabla_a g_bc = 0` -- a property of the *connection* being
+            // Levi-Civita, not of the metric's shape, so declared like
+            // `--bianchi` rather than deduced. Distinct from `--metric`,
+            // which contracts an *undifferentiated* metric away: a
+            // differentiated one is a different object, and assuming it
+            // vanishes is precisely this flag's job to state.
+            "--metric-compatible" => compatible_heads.push(args.next().ok_or(CliError::Usage)?),
             _ => expr = Some(a),
         }
     }
@@ -214,6 +222,10 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     for name in &bianchi_heads {
         let head = model.registry.lookup_head(name)?;
         oderom_egraph::apply_bianchi(&mut egraph, &model.registry, head);
+    }
+    for name in &compatible_heads {
+        let head = model.registry.lookup_head(name)?;
+        oderom_egraph::apply_metric_compatibility(&mut egraph, &model.registry, head);
     }
 
     let start = Instant::now();

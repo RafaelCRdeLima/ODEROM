@@ -315,3 +315,104 @@ fn empty_input_is_still_an_error() {
     assert!(!ok, "empty input must not be accepted");
     assert!(!err.is_empty());
 }
+
+// ---------------------------------------------------------------------
+// The intersection of the two newest features: metric elimination and
+// covariant derivatives. Each was tested alone; these are the cases
+// where they meet, which is where a wrong assumption in either one
+// would show up as a wrong *answer* rather than an error.
+// ---------------------------------------------------------------------
+
+/// A metric contracted into a differentiated tensor's ordinary slots
+/// still eliminates -- differentiation does not shield the tensor
+/// indices from index gymnastics.
+#[test]
+fn a_metric_still_eliminates_into_a_differentiated_tensor() {
+    let (ok, out, err) = simplify(&["--metric", "g", "R[a,b,c,d;e] g[a,c]"]);
+    assert!(ok, "{err}");
+    assert!(!out.contains("g["), "the metric should be gone: {out}");
+    assert!(out.contains(";e"), "the derivative index should survive: {out}");
+}
+
+/// A metric contracted into the *derivative* index lowers it like any
+/// other index.
+#[test]
+fn a_metric_lowers_a_derivative_index_too() {
+    let (ok, out, err) = simplify(&["--metric", "g", "R[a,b,c,d;e] g[e,f]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "R[a,b,c,d;f]");
+}
+
+/// **`nabla_c g_ab` must NOT be eliminated.** It is a different object
+/// from `g_ab`: that it vanishes is metric compatibility, a *declared*
+/// property of the Levi-Civita connection, not something elimination may
+/// assume. Today this holds by construction -- the derivative head is a
+/// distinct `HeadId`, so it never matches the metric being eliminated --
+/// but that is exactly the kind of correctness-by-accident a later
+/// "improvement" (matching on `base_head()`, say) would silently undo,
+/// turning a declared physical fact into an unstated assumption. If this
+/// test starts printing anything other than the input, elimination has
+/// begun asserting metric compatibility on its own.
+#[test]
+fn a_differentiated_metric_is_never_eliminated() {
+    let (ok, out, err) = simplify(&["--metric", "g", "g[a,b;c]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "g[a,b;c]", "nabla_c g_ab is not g_ab and must survive elimination");
+}
+
+// ---------------------------------------------------------------------
+// Metric compatibility, `nabla_a g_bc = 0` -- the defining property of
+// the Levi-Civita connection, declared with `--metric-compatible`.
+//
+// Deliberately a *separate* flag from `--metric` (index gymnastics).
+// `--metric` eliminates an undifferentiated metric; this one says a
+// differentiated metric vanishes. Conflating them would let index
+// raising silently assume a property of the connection.
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_differentiated_metric_vanishes_when_compatibility_is_declared() {
+    let (ok, out, err) = simplify(&["--metric-compatible", "g", "g[a,b;c]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}
+
+/// The negative control, and the reason the flag exists: a metric
+/// carried by a connection with torsion does not satisfy this, so the
+/// engine must not assume it. Without the flag, `nabla_c g_ab` survives.
+#[test]
+fn a_differentiated_metric_survives_without_the_compatibility_axiom() {
+    let (ok, out, err) = simplify(&["g[a,b;c]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "g[a,b;c]");
+}
+
+/// A product with a vanishing factor vanishes -- so the rule is useful
+/// without any Leibniz machinery: `nabla_a g_bc R[d,e,f,h]` is zero for
+/// the same reason `nabla_a g_bc` is.
+#[test]
+fn a_product_containing_a_differentiated_metric_vanishes() {
+    let (ok, out, err) = simplify(&["--metric-compatible", "g", "g[a,b;c] R[d,e,f,h]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}
+
+/// Higher derivatives vanish too -- `nabla_d nabla_c g_ab = 0` follows
+/// from differentiating zero, and the rule matches on *any* derivative
+/// count rather than only the first.
+#[test]
+fn a_second_derivative_of_the_metric_also_vanishes() {
+    let (ok, out, err) = simplify(&["--metric-compatible", "g", "g[a,b;c,d]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}
+
+/// The *undifferentiated* metric is emphatically not zero. This is the
+/// control that keeps the rule from degenerating into "delete every
+/// metric factor".
+#[test]
+fn the_undifferentiated_metric_is_not_zero() {
+    let (ok, out, err) = simplify(&["--metric-compatible", "g", "g[a,b]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "g[a,b]");
+}

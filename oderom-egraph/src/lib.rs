@@ -15,10 +15,12 @@
 //! e-graph rather than depending on `egg`.
 
 mod bianchi;
+mod compatibility;
 mod egraph;
 mod extract;
 mod union_find;
 
 pub use bianchi::apply_bianchi;
+pub use compatibility::apply_metric_compatibility;
 pub use egraph::{EClassId, EGraph, ENode};
 pub use extract::extract;
