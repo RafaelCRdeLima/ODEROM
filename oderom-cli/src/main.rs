@@ -178,12 +178,20 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     let mut prelude_path = "prelude.od".to_string();
     let mut expr: Option<String> = None;
     let mut bianchi_heads: Vec<String> = Vec::new();
+    let mut bianchi2_heads: Vec<String> = Vec::new();
     let mut metric_heads: Vec<String> = Vec::new();
     let mut compatible_heads: Vec<String> = Vec::new();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--prelude" => prelude_path = args.next().ok_or(CliError::Usage)?,
             "--bianchi" => bianchi_heads.push(args.next().ok_or(CliError::Usage)?),
+            // The differential identity, `R_{ab[cd;e]} = 0`. Separate
+            // from `--bianchi` because it is a separate axiom: neither
+            // implies the other, and the pair of negative controls in
+            // `oderom-egraph`'s `bianchi.rs` pins that down. Takes the
+            // *base* Riemann head; the differentiated head is found
+            // structurally, so nobody has to name `R;1`.
+            "--bianchi2" => bianchi2_heads.push(args.next().ok_or(CliError::Usage)?),
             "--metric" => metric_heads.push(args.next().ok_or(CliError::Usage)?),
             // `nabla_a g_bc = 0` -- a property of the *connection* being
             // Levi-Civita, not of the metric's shape, so declared like
@@ -222,6 +230,10 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     for name in &bianchi_heads {
         let head = model.registry.lookup_head(name)?;
         oderom_egraph::apply_bianchi(&mut egraph, &model.registry, head);
+    }
+    for name in &bianchi2_heads {
+        let head = model.registry.lookup_head(name)?;
+        oderom_egraph::apply_second_bianchi(&mut egraph, &model.registry, head);
     }
     for name in &compatible_heads {
         let head = model.registry.lookup_head(name)?;

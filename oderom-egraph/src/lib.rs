@@ -20,7 +20,7 @@ mod egraph;
 mod extract;
 mod union_find;
 
-pub use bianchi::apply_bianchi;
+pub use bianchi::{apply_bianchi, apply_second_bianchi};
 pub use compatibility::apply_metric_compatibility;
 pub use egraph::{EClassId, EGraph, ENode};
 pub use extract::extract;

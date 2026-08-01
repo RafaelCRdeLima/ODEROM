@@ -144,6 +144,68 @@ fn bianchi_on_an_undeclared_head_is_a_clean_error() {
 }
 
 // ---------------------------------------------------------------------
+// Second (differential) Bianchi identity, `R_{ab[cd;e]} = 0`.
+//
+// Declared through `--bianchi2`, taking the *base* Riemann head: the
+// once-differentiated head is found structurally, so the user never
+// writes `R;1`.
+// ---------------------------------------------------------------------
+
+const DIFF_SUM: &str = "R[a,b,c,d;e] + R[a,b,d,e;c] + R[a,b,e,c;d]";
+const ALG_SUM: &str = "R[a,b,c,d] + R[a,c,d,b] + R[a,d,b,c]";
+
+#[test]
+fn second_bianchi_zeroes_the_differential_cyclic_sum() {
+    let (ok, out, err) = simplify(&["--bianchi2", "R", DIFF_SUM]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "0", "{out}");
+}
+
+/// Negative control: without the flag the same sum must survive intact,
+/// which is what makes the identity visible as an extra axiom rather
+/// than bookkeeping the engine was doing anyway.
+#[test]
+fn without_the_flag_the_differential_sum_survives() {
+    let (ok, out, err) = simplify(&[DIFF_SUM]);
+    assert!(ok, "{err}");
+    assert_ne!(out.trim(), "0", "the differential sum must not vanish undeclared");
+}
+
+/// The two identities are independent axioms: neither implies the
+/// other. Declaring one must not silently buy the other, in either
+/// direction -- the failure this guards against is a flag that quietly
+/// applies "Bianchi" generally and makes the distinction unobservable.
+#[test]
+fn the_two_bianchi_flags_are_not_interchangeable() {
+    let (ok, out, err) = simplify(&["--bianchi", "R", DIFF_SUM]);
+    assert!(ok, "{err}");
+    assert_ne!(out.trim(), "0", "--bianchi (algebraic) must not reduce a differential sum");
+
+    let (ok, out, err) = simplify(&["--bianchi2", "R", ALG_SUM]);
+    assert!(ok, "{err}");
+    assert_ne!(out.trim(), "0", "--bianchi2 (differential) must not reduce an algebraic sum");
+}
+
+/// Both may be declared at once, and then both reduce.
+#[test]
+fn both_bianchi_identities_can_be_declared_together() {
+    let (ok, out, err) = simplify(&["--bianchi", "R", "--bianchi2", "R", ALG_SUM]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "0", "{out}");
+
+    let (ok, out, err) = simplify(&["--bianchi", "R", "--bianchi2", "R", DIFF_SUM]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "0", "{out}");
+}
+
+#[test]
+fn second_bianchi_on_an_undeclared_head_is_a_clean_error() {
+    let (ok, _out, err) = simplify(&["--bianchi2", "Nonexistent", DIFF_SUM]);
+    assert!(!ok, "an undeclared --bianchi2 head must be an error");
+    assert!(!err.is_empty());
+}
+
+// ---------------------------------------------------------------------
 // Metric elimination (index raising/lowering). This is the operation
 // DESIGN.md records as out of Marco 1's reach -- it changes a term's
 // factor count, which no permutation-symmetry coset search can do -- and
