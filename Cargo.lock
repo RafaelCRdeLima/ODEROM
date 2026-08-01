@@ -2471,6 +2471,7 @@ dependencies = [
  "oderom-core",
  "oderom-egraph",
  "oderom-expr",
+ "proptest",
  "smallvec",
  "thiserror 1.0.69",
 ]

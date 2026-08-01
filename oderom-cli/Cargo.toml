@@ -21,3 +21,6 @@ smallvec = "1"
 [lints.rust]
 warnings = "deny"
 unsafe_code = "forbid"
+
+[dev-dependencies]
+proptest = "1"

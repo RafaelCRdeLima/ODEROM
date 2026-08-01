@@ -275,3 +275,43 @@ fn a_semicolon_with_no_derivative_index_is_a_clean_error() {
     assert!(!ok, "a dangling `;` must not be accepted");
     assert!(!err.is_empty());
 }
+
+/// `0` is the single most common thing this tool prints, and for three
+/// rounds it could not be read back: the parser demanded at least one
+/// tensor factor, so a reader who cancelled a sum, got `0`, and pasted
+/// it back to keep working got a parse error instead. Found by asking
+/// what the round-trip property test could *not* generate -- its
+/// generator only produced valid *input*, and this shape was valid
+/// output only.
+#[test]
+fn zero_the_most_common_output_parses_back_in() {
+    let (ok, out, err) = simplify(&["0"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "0");
+}
+
+/// The same for a bare dimension, which is what a traced metric reduces
+/// to (`g[a,a]` -> `4`).
+#[test]
+fn a_bare_coefficient_parses_back_in() {
+    let (ok, out, err) = simplify(&["4"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "4");
+}
+
+/// Scalars add like any other like terms.
+#[test]
+fn bare_scalars_add() {
+    let (ok, out, err) = simplify(&["3 + 2"]);
+    assert!(ok, "{err}");
+    assert_eq!(out, "5");
+}
+
+/// Empty input is still an error -- accepting a bare coefficient must
+/// not have made the parser accept nothing at all.
+#[test]
+fn empty_input_is_still_an_error() {
+    let (ok, _out, err) = simplify(&["   "]);
+    assert!(!ok, "empty input must not be accepted");
+    assert!(!err.is_empty());
+}

@@ -1123,6 +1123,7 @@ pub fn parse_monomial(src: &str, registry: &mut Registry) -> Result<Monomial, Cl
         toks.advance();
     }
 
+    let saw_coefficient = matches!(toks.peek(), Tok::Int(_));
     let coeff = if let Tok::Int(_) = toks.peek() {
         let num = toks.int()? as i64;
         if *toks.peek() == Tok::Sym('/') {
@@ -1144,9 +1145,16 @@ pub fn parse_monomial(src: &str, registry: &mut Registry) -> Result<Monomial, Cl
             other => return Err(toks.error(format!("expected a tensor factor, found {other:?}"))),
         }
     }
-    if factors.is_empty() {
-        return Err(toks.error("expected at least one tensor factor"));
+    if factors.is_empty() && !saw_coefficient {
+        return Err(toks.error("expected a rational coefficient, at least one tensor factor, or both"));
     }
+    // A bare coefficient with no factors is a legitimate monomial -- a
+    // scalar. It is not a curiosity of the grammar: it is what this
+    // project's own tools *print*. `g[a,a]` with the metric eliminated
+    // is the dimension (`4`), and a sum that cancels is `0`, which is
+    // the single most common thing `simplify` outputs. Rejecting it on
+    // input meant a reader could not paste a result back in to keep
+    // working -- the renderer could emit text its own parser refused.
 
     build_monomial(coeff, factors, registry)
 }
