@@ -198,6 +198,83 @@ fn both_bianchi_identities_can_be_declared_together() {
     assert_eq!(out.trim(), "0", "{out}");
 }
 
+// ---------------------------------------------------------------------
+// Symmetrisation brackets: `T[(a,b)]` is `(T[a,b] + T[b,a])/2`,
+// `T[[a,b]]` is `(T[a,b] - T[b,a])/2`.
+//
+// Expanded in the parser, because the abbreviation denotes a *sum* and
+// the e-graph's terms are monomials. The tests below check it against
+// symmetries the registry already knows, so each one has an answer that
+// does not depend on the expansion being right in the same way twice.
+// ---------------------------------------------------------------------
+
+/// The metric is declared symmetric, so antisymmetrising it must vanish
+/// -- and symmetrising it must change nothing.
+#[test]
+fn symmetrisation_agrees_with_the_declared_symmetry_of_the_metric() {
+    let (ok, out, err) = simplify(&["g[[a,b]]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "0", "antisymmetrising a symmetric tensor must vanish");
+
+    let (ok, out, err) = simplify(&["g[(a,b)]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "g[a,b]", "symmetrising a symmetric tensor must be the identity");
+}
+
+/// Riemann is antisymmetric in its last pair, so the mirror image holds
+/// there -- a check against a *different* declared symmetry, and one
+/// where the bracket that vanishes is the opposite one.
+#[test]
+fn symmetrisation_agrees_with_riemanns_pair_antisymmetry() {
+    let (ok, out, err) = simplify(&["R[a,b,(c,d)]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "0", "symmetrising an antisymmetric pair must vanish");
+
+    let (ok, out, err) = simplify(&["R[a,b,[c,d]]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "R[a,b,c,d]", "{out}");
+}
+
+/// A group may straddle the `;`: `R[a,b,[c,d;e]]` antisymmetrises two
+/// base indices together with a derivative index. It expands to six
+/// terms that collapse to the second Bianchi identity's three.
+#[test]
+fn a_symmetrisation_group_may_span_the_derivative_semicolon() {
+    let (ok, out, err) = simplify(&["R[a,b,[c,d;e]]"]);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "1/3 R[a,b,c,d;e] + -1/3 R[a,b,c,e;d] + 1/3 R[a,b,d,e;c]", "{out}");
+}
+
+/// `canon` is a single-monomial operation, so a bracket that abbreviates
+/// a sum is a category error there -- and must say so, rather than
+/// canonicalising one term and dropping the rest.
+#[test]
+fn canon_rejects_a_symmetrisation_instead_of_dropping_terms() {
+    let out = Command::new(env!("CARGO_BIN_EXE_oderom"))
+        .args(["canon", "g[(a,b)]"])
+        .arg("--prelude")
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../prelude.od"))
+        .output()
+        .expect("failed to run oderom");
+    assert!(!out.status.success(), "canon must reject a symmetrisation");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("monomio unico"), "{err}");
+}
+
+#[test]
+fn an_unclosed_symmetrisation_group_is_a_clean_error() {
+    let (ok, _out, err) = simplify(&["R[a,(b,c,d]"]);
+    assert!(!ok, "an unclosed `(` must be an error");
+    assert!(err.contains("nunca foi fechado"), "{err}");
+}
+
+#[test]
+fn nested_symmetrisation_groups_are_rejected() {
+    let (ok, _out, err) = simplify(&["R[((a,b),c),d]"]);
+    assert!(!ok, "nested groups must be an error, not a guess");
+    assert!(err.contains("aninhados"), "{err}");
+}
+
 #[test]
 fn second_bianchi_on_an_undeclared_head_is_a_clean_error() {
     let (ok, _out, err) = simplify(&["--bianchi2", "Nonexistent", DIFF_SUM]);

@@ -1105,6 +1105,23 @@ struct ParsedFactor {
     /// -- covariant-derivative indices, in the standard GR spelling
     /// (`T[a,b;c]` is the tensor `nabla_c T_ab`).
     derivatives: u8,
+    /// Symmetrisation groups, as position ranges into `indices`.
+    sym_groups: Vec<SymGroup>,
+}
+
+/// A run of index positions to be (anti)symmetrised over: `T[(a,b)]` is
+/// `(T[a,b] + T[b,a])/2`, `T[[a,b]]` is `(T[a,b] - T[b,a])/2`.
+///
+/// A group may straddle the `;`. That is not an oversight to be
+/// forbidden: `R_{ab[cd;e]}` -- the second Bianchi identity's own
+/// spelling -- antisymmetrises two base indices together with a
+/// derivative index. Permuting labels never changes *which* positions
+/// are derivative slots, so the straddling case needs no special care.
+#[derive(Clone, Copy)]
+struct SymGroup {
+    start: usize,
+    len: usize,
+    antisym: bool,
 }
 
 /// Parses and resolves a single tensor monomial against `registry`:
@@ -1113,6 +1130,25 @@ struct ParsedFactor {
 /// becomes a contraction; exactly once, a free index; any other count is
 /// a parse error.
 pub fn parse_monomial(src: &str, registry: &mut Registry) -> Result<Monomial, CliError> {
+    let mut expanded = parse_monomial_expanded(src, registry)?;
+    if expanded.len() != 1 {
+        return Err(CliError::Parse {
+            message: format!(
+                "simetrizacao abrevia uma soma de {} monomios, e aqui e esperado um monomio unico; use `oderom simplify`",
+                expanded.len()
+            ),
+            position: None,
+        });
+    }
+    Ok(expanded.pop().expect("length checked to be 1 just above"))
+}
+
+/// `parse_monomial`'s real body. Returns a *vector* because a
+/// symmetrisation group abbreviates a sum: `T[(a,b)]` is two monomials,
+/// not one. Callers that genuinely need a single monomial (`canon`, a
+/// Marco 1 operation on one term) go through `parse_monomial` above and
+/// get a clear error instead of a silently dropped term.
+fn parse_monomial_expanded(src: &str, registry: &mut Registry) -> Result<Vec<Monomial>, CliError> {
     let mut toks = TokStream::new(src)?;
 
     let mut coeff_sign = 1i64;
@@ -1156,7 +1192,22 @@ pub fn parse_monomial(src: &str, registry: &mut Registry) -> Result<Monomial, Cl
     // input meant a reader could not paste a result back in to keep
     // working -- the renderer could emit text its own parser refused.
 
-    build_monomial(coeff, factors, registry)
+    expand_symmetrisations(coeff, &factors, &toks)?
+        .into_iter()
+        .map(|(c, labels)| {
+            let rewritten: Vec<ParsedFactor> = factors
+                .iter()
+                .zip(labels)
+                .map(|(f, indices)| ParsedFactor {
+                    head_name: f.head_name.clone(),
+                    indices,
+                    derivatives: f.derivatives,
+                    sym_groups: Vec::new(),
+                })
+                .collect();
+            build_monomial(c, rewritten, registry)
+        })
+        .collect()
 }
 
 fn parse_factor(toks: &mut TokStream) -> Result<ParsedFactor, CliError> {
@@ -1170,10 +1221,47 @@ fn parse_factor(toks: &mut TokStream) -> Result<ParsedFactor, CliError> {
     // prefix operator, so nothing else about a factor changes.
     let mut derivatives: u8 = 0;
     let mut seen_semicolon = false;
+    let mut sym_groups: Vec<SymGroup> = Vec::new();
+    // `(antisym, start)` of the group currently open, if any. Only one
+    // may be open at a time: nesting is rejected rather than guessed at.
+    let mut open: Option<(bool, usize)> = None;
     loop {
+        // A loop, not a single check: consecutive openers (`[((a,b),c)]`)
+        // must be caught here as nesting. Testing only once per iteration
+        // would let the second `(` fall through to `ident()` and be
+        // reported as "expected an identifier", which names the symptom
+        // instead of what the user wrote.
+        while let Tok::Sym(c @ ('(' | '[')) = toks.peek() {
+            let antisym = *c == '[';
+            if open.is_some() {
+                return Err(toks.error(
+                    "grupos de simetrizacao nao podem ser aninhados; feche o grupo aberto antes de abrir outro",
+                ));
+            }
+            toks.advance();
+            open = Some((antisym, indices.len()));
+        }
         indices.push(toks.ident()?);
         if seen_semicolon {
             derivatives += 1;
+        }
+        // A `]` closes an open antisymmetrisation group; otherwise it is
+        // the factor's own closing bracket, left for `expect_sym` below.
+        match (toks.peek(), open) {
+            (Tok::Sym(')'), Some((false, start))) => {
+                toks.advance();
+                sym_groups.push(SymGroup { start, len: indices.len() - start, antisym: false });
+                open = None;
+            }
+            (Tok::Sym(']'), Some((true, start))) => {
+                toks.advance();
+                sym_groups.push(SymGroup { start, len: indices.len() - start, antisym: true });
+                open = None;
+            }
+            (Tok::Sym(')'), _) => {
+                return Err(toks.error("`)` sem `(` correspondente na lista de indices"));
+            }
+            _ => {}
         }
         match toks.peek() {
             Tok::Sym(',') => {
@@ -1192,8 +1280,96 @@ fn parse_factor(toks: &mut TokStream) -> Result<ParsedFactor, CliError> {
     if seen_semicolon && derivatives == 0 {
         return Err(toks.error("`;` must be followed by at least one derivative index"));
     }
+    if let Some((antisym, _)) = open {
+        let (opener, closer) = if antisym { ("[", "]") } else { ("(", ")") };
+        return Err(toks.error(format!(
+            "grupo de simetrizacao aberto com `{opener}` nunca foi fechado com `{closer}`"
+        )));
+    }
     toks.expect_sym(']')?;
-    Ok(ParsedFactor { head_name, indices, derivatives })
+    Ok(ParsedFactor { head_name, indices, derivatives, sym_groups })
+}
+
+/// The factorial `k!`, the number of terms an order-`k` symmetrisation
+/// expands to and hence its normalising denominator.
+fn factorial(k: usize) -> i64 {
+    (1..=k as i64).product::<i64>().max(1)
+}
+
+/// Every permutation of `0..k`, each paired with its sign.
+fn permutations_with_sign(k: usize) -> Vec<(Vec<usize>, i64)> {
+    let mut cur: Vec<usize> = (0..k).collect();
+    let mut out = Vec::new();
+    fn go(cur: &mut Vec<usize>, i: usize, out: &mut Vec<(Vec<usize>, i64)>) {
+        if i == cur.len() {
+            // Sign from the inversion count. `k` is a tensor rank, so
+            // this quadratic count is over a handful of elements.
+            let inv = (0..cur.len())
+                .flat_map(|a| ((a + 1)..cur.len()).map(move |b| (a, b)))
+                .filter(|(a, b)| cur[*a] > cur[*b])
+                .count();
+            out.push((cur.clone(), if inv % 2 == 0 { 1 } else { -1 }));
+            return;
+        }
+        for j in i..cur.len() {
+            cur.swap(i, j);
+            go(cur, i + 1, out);
+            cur.swap(i, j);
+        }
+    }
+    go(&mut cur, 0, &mut out);
+    out
+}
+
+/// Beyond this, a single symmetrisation would expand to more terms than
+/// anyone can read (7! = 5040), so it is refused with its own message
+/// rather than silently producing an unusable result.
+const MAX_SYMMETRISATION_ORDER: usize = 6;
+
+/// Expands every symmetrisation group in `parsed` into the sum it
+/// abbreviates, returning one `(coefficient, per-factor index labels)`
+/// pair per resulting monomial.
+///
+/// Groups multiply: each contributes its own permutations, and the
+/// result is their Cartesian product across all factors of the monomial.
+/// A factor with no groups contributes exactly one alternative, so the
+/// no-symmetrisation case falls out as the singleton and costs nothing.
+fn expand_symmetrisations(
+    coeff: Scalar,
+    parsed: &[ParsedFactor],
+    toks: &TokStream,
+) -> Result<Vec<(Scalar, Vec<Vec<String>>)>, CliError> {
+    let mut out: Vec<(Scalar, Vec<Vec<String>>)> =
+        vec![(coeff, parsed.iter().map(|f| f.indices.clone()).collect())];
+
+    for (fi, factor) in parsed.iter().enumerate() {
+        for group in &factor.sym_groups {
+            if group.len > MAX_SYMMETRISATION_ORDER {
+                return Err(toks.error(format!(
+                    "simetrizacao sobre {} indices geraria {} termos; o maximo suportado e {MAX_SYMMETRISATION_ORDER} indices",
+                    group.len,
+                    factorial(group.len)
+                )));
+            }
+            let perms = permutations_with_sign(group.len);
+            let norm = Scalar::new(1, factorial(group.len));
+            let mut next = Vec::with_capacity(out.len() * perms.len());
+            for (c, labels) in &out {
+                for (perm, sign) in &perms {
+                    let mut labels = labels.clone();
+                    let original: Vec<String> =
+                        (0..group.len).map(|i| labels[fi][group.start + i].clone()).collect();
+                    for i in 0..group.len {
+                        labels[fi][group.start + i] = original[perm[i]].clone();
+                    }
+                    let signed = if group.antisym { Scalar::from_int(*sign) } else { Scalar::ONE };
+                    next.push((*c * norm * signed, labels));
+                }
+            }
+            out = next;
+        }
+    }
+    Ok(out)
 }
 
 fn build_monomial(
@@ -1327,7 +1503,9 @@ pub fn parse_polynomial(src: &str, registry: &mut Registry) -> Result<Vec<Monomi
             return Err(CliError::Parse { message: format!("operador `{}` sem monomio depois dele", term.trim()), position: None });
         }
         let normalized = if negative { format!("-{rest}") } else { rest.to_string() };
-        parsed.push(parse_monomial(&normalized, registry)?);
+        // `extend`, not `push`: a term carrying a symmetrisation group
+        // expands to several monomials, and the sum absorbs them all.
+        parsed.extend(parse_monomial_expanded(&normalized, registry)?);
     }
     Ok(parsed)
 }
