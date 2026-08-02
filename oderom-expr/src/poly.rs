@@ -315,13 +315,49 @@ impl Poly {
         result
     }
 
+    /// One accumulator map for the whole product, not one `Poly::add`
+    /// per term pair.
+    ///
+    /// The previous form was `acc = acc.add(&mul_term(a, b, table))`
+    /// inside this double loop. Each `add` rebuilds a whole map over
+    /// every term of `acc` plus the new one, so a `p x q` product paid
+    /// `p*q` rebuilds of growing size -- quadratic in the number of
+    /// product terms, with a map allocation, a generator-vector clone
+    /// and a sort *per iteration* rather than per multiplication.
+    ///
+    /// `Poly::pow` chains `n` of these, so the accumulator entering the
+    /// third multiplication at `e=3` is the already-expanded square.
+    /// That is why the measured cost axis was the exponent: at least
+    /// 170x per increment, with `e=4` not finishing in 300s (release).
+    ///
+    /// Inserting straight into one map makes it `p*q` amortised-O(1)
+    /// insertions. Generator sorting now happens once per product term
+    /// while building its key, and the map is allocated once per `mul`.
+    ///
+    /// Exactness is unaffected: this changes the *order* in which
+    /// coefficients are summed, and `BigScalar` addition over Q is
+    /// associative and commutative. It can change output term order.
     pub(crate) fn mul(&self, other: &Poly, table: &mut AtomTable) -> Poly {
-        let mut acc = Poly::zero();
+        let mut grouped: FxHashMap<Vec<(AtomId, u32)>, BigScalar> = FxHashMap::default();
         for a in &self.terms {
             for b in &other.terms {
-                acc = acc.add(&mul_term(a, b, table));
+                // `mul_term` returns a `Poly`: empty when the product
+                // coefficient is zero, one term otherwise.
+                for t in mul_term(a, b, table).terms {
+                    let mut gens = t.generators;
+                    gens.sort_by_key(|(id, _)| id.0);
+                    let entry = grouped.entry(gens).or_insert(BigScalar::zero());
+                    *entry = entry.clone() + t.coeff;
+                }
             }
         }
+        let acc = Poly {
+            terms: grouped
+                .into_iter()
+                .filter(|(_, c)| !c.is_zero())
+                .map(|(generators, coeff)| Term { coeff, generators })
+                .collect(),
+        };
         debug_assert_invariant(&acc);
         acc
     }
