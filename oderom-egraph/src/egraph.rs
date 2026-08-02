@@ -15,7 +15,7 @@
 
 use crate::union_find::UnionFind;
 use oderom_canon::canonicalize;
-use oderom_core::{Monomial, Registry};
+use oderom_core::{Monomial, Registry, Scalar};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -23,7 +23,7 @@ use smallvec::SmallVec;
 /// always pass it through [`EGraph::find`] (or a method that already
 /// does, like [`EGraph::add`] and [`EGraph::union`]) before comparing two
 /// ids for equivalence.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EClassId(u32);
 
 /// One way to build a value: either a single already-canonical monomial,
@@ -71,10 +71,23 @@ impl EGraph {
     /// Canonicalizes `m` (via `oderom_canon::canonicalize`) and adds it
     /// as a [`ENode::Term`] -- or, if `m` is forced to zero by its own
     /// symmetry (see `oderom-canon`), returns [`EGraph::zero`] directly.
-    pub fn add_monomial(&mut self, registry: &Registry, m: &Monomial) -> EClassId {
+    /// Returns the term's e-class together with its coefficient.
+    ///
+    /// R1a: the coefficient is *also* returned, not yet moved out of
+    /// `ENode::Term` -- `Term` still carries it, so behaviour is
+    /// unchanged and every caller takes `.0`. Splitting the signature
+    /// change away from the representation change keeps R1b to the
+    /// semantics alone.
+    ///
+    /// A canonicalization that proves the monomial equal to its own
+    /// negative contributes the zero e-class and a zero coefficient.
+    pub fn add_monomial(&mut self, registry: &Registry, m: &Monomial) -> (EClassId, Scalar) {
         match canonicalize(m, registry).expect("m was already validated by Monomial::try_new") {
-            oderom_canon::CanonResult::Zero => self.zero(),
-            oderom_canon::CanonResult::Value(c) => self.add(ENode::Term(c.monomial)),
+            oderom_canon::CanonResult::Zero => (self.zero(), Scalar::ZERO),
+            oderom_canon::CanonResult::Value(c) => {
+                let coeff = c.monomial.coeff();
+                (self.add(ENode::Term(c.monomial)), coeff)
+            }
         }
     }
 
@@ -176,8 +189,8 @@ mod tests {
     fn adding_the_same_monomial_twice_hashcons_to_one_class() {
         let (reg, v) = vector_registry();
         let mut eg = EGraph::new();
-        let a1 = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
-        let a2 = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
+        let a1 = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let a2 = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
         assert_eq!(eg.find(a1), eg.find(a2));
     }
 
@@ -185,8 +198,8 @@ mod tests {
     fn distinct_monomials_start_in_distinct_classes() {
         let (reg, v) = vector_registry();
         let mut eg = EGraph::new();
-        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
-        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y"));
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
         assert_ne!(eg.find(a), eg.find(b));
     }
 
@@ -194,8 +207,8 @@ mod tests {
     fn union_merges_classes() {
         let (reg, v) = vector_registry();
         let mut eg = EGraph::new();
-        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
-        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y"));
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
         eg.union(a, b);
         assert_eq!(eg.find(a), eg.find(b));
     }
@@ -207,9 +220,9 @@ mod tests {
         // syntactically different nodes.
         let (reg, v) = vector_registry();
         let mut eg = EGraph::new();
-        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
-        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y"));
-        let c = eg.add_monomial(&reg, &vector_monomial(v, &reg, "z"));
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
+        let c = eg.add_monomial(&reg, &vector_monomial(v, &reg, "z")).0;
 
         let sum_ac = eg.add(ENode::Sum(smallvec![a, c]));
         let sum_bc = eg.add(ENode::Sum(smallvec![b, c]));
@@ -224,8 +237,8 @@ mod tests {
     fn sum_node_children_hashcons_regardless_of_order() {
         let (reg, v) = vector_registry();
         let mut eg = EGraph::new();
-        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x"));
-        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y"));
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
         let sum_ab = eg.add(ENode::Sum(smallvec![a, b]));
         let sum_ba = eg.add(ENode::Sum(smallvec![b, a]));
         assert_eq!(eg.find(sum_ab), eg.find(sum_ba));

@@ -224,7 +224,7 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
 
     let mut egraph = oderom_egraph::EGraph::new();
     let ids: smallvec::SmallVec<[oderom_egraph::EClassId; 4]> =
-        terms.iter().map(|m| egraph.add_monomial(&model.registry, m)).collect();
+        terms.iter().map(|m| egraph.add_monomial(&model.registry, m).0).collect();
     let root = egraph.add(oderom_egraph::ENode::Sum(ids));
 
     for name in &bianchi_heads {

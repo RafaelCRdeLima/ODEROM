@@ -41,7 +41,7 @@ pub fn apply_metric_compatibility(egraph: &mut EGraph, registry: &Registry, metr
         .collect();
 
     for m in vanishing {
-        let id = egraph.add_monomial(registry, &m);
+        let id = egraph.add_monomial(registry, &m).0;
         let zero = egraph.zero();
         egraph.union(id, zero);
     }

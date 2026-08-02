@@ -49,18 +49,18 @@ fn first_bianchi_identity_zeroes_the_cyclic_sum() {
     let m3 = riemann_free(r, &registry, ["a", "d", "b", "c"]);
 
     let mut with_bianchi = EGraph::new();
-    let id1 = with_bianchi.add_monomial(&registry, &m1);
-    let id2 = with_bianchi.add_monomial(&registry, &m2);
-    let id3 = with_bianchi.add_monomial(&registry, &m3);
+    let id1 = with_bianchi.add_monomial(&registry, &m1).0;
+    let id2 = with_bianchi.add_monomial(&registry, &m2).0;
+    let id3 = with_bianchi.add_monomial(&registry, &m3).0;
     let sum = with_bianchi.add(ENode::Sum(smallvec::smallvec![id1, id2, id3]));
     apply_bianchi(&mut with_bianchi, &registry, r);
     let reduced = extract(&mut with_bianchi, sum);
     assert!(reduced.terms.is_empty(), "with Bianchi: expected zero, got {} terms", reduced.terms.len());
 
     let mut without_bianchi = EGraph::new();
-    let id1 = without_bianchi.add_monomial(&registry, &m1);
-    let id2 = without_bianchi.add_monomial(&registry, &m2);
-    let id3 = without_bianchi.add_monomial(&registry, &m3);
+    let id1 = without_bianchi.add_monomial(&registry, &m1).0;
+    let id2 = without_bianchi.add_monomial(&registry, &m2).0;
+    let id3 = without_bianchi.add_monomial(&registry, &m3).0;
     let sum = without_bianchi.add(ENode::Sum(smallvec::smallvec![id1, id2, id3]));
     let unreduced = extract(&mut without_bianchi, sum);
     assert_eq!(unreduced.terms.len(), 3, "without Bianchi: the sum should not reduce");
