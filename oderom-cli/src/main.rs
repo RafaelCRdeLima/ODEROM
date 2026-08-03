@@ -223,9 +223,12 @@ fn run_simplify(mut args: impl Iterator<Item = String>) -> Result<(), CliError> 
     let terms = terms;
 
     let mut egraph = oderom_egraph::EGraph::new();
-    let ids: smallvec::SmallVec<[oderom_egraph::EClassId; 4]> =
-        terms.iter().map(|m| egraph.add_monomial(&model.registry, m).0).collect();
-    let root = egraph.add(oderom_egraph::ENode::Sum(ids));
+    // R1b: `add_monomial` hands back the coefficient, and `add_sum`
+    // collects like terms as it builds. Two terms of the same shape can
+    // no longer reach the root uncollected, and a pair that cancels
+    // never becomes a node at all.
+    let pairs: Vec<_> = terms.iter().map(|m| egraph.add_monomial(&model.registry, m)).collect();
+    let root = egraph.add_sum(pairs);
 
     for name in &bianchi_heads {
         let head = model.registry.lookup_head(name)?;

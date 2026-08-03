@@ -308,6 +308,23 @@ impl Monomial {
         self.coeff
     }
 
+    /// The same monomial with its coefficient multiplied by `factor`.
+    ///
+    /// Infallible, and deliberately not routed through [`try_new`]:
+    /// every invariant `try_new` checks is about *slots* -- which slot
+    /// ids exist, that each is used exactly once, that no two free slots
+    /// share a label. The coefficient participates in none of them, so
+    /// scaling cannot invalidate a monomial that was already valid, and
+    /// re-validating would only cost a sort.
+    ///
+    /// Added for `oderom-egraph`'s `SumNode`, where the coefficient
+    /// lives in the sum rather than in the term and has to be pushed
+    /// back into the monomial at extraction time -- a point that has no
+    /// `Registry` to call [`try_new`] with.
+    pub fn scaled(&self, factor: Scalar) -> Monomial {
+        Monomial { coeff: self.coeff * factor, ..self.clone() }
+    }
+
     pub fn factors(&self) -> &[Factor] {
         &self.factors
     }

@@ -18,7 +18,7 @@
 
 use crate::egraph::{EGraph, ENode};
 use oderom_core::{AbstractIndex, Factor, HeadId, Matching, Monomial, Registry, SlotId};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 /// For every e-class holding a bare (uncontracted, fully free-indexed)
 /// monomial of `riemann_head`, injects the first Bianchi identity: that
@@ -75,12 +75,14 @@ fn inject_cyclic_sum_is_zero(
         let cyclic1 = permute_free_indices(&m, registry, &labels, order1);
         let cyclic2 = permute_free_indices(&m, registry, &labels, order2);
 
-        let id0 = egraph.add_monomial(registry, &m).0;
-        let id1 = egraph.add_monomial(registry, &cyclic1).0;
-        let id2 = egraph.add_monomial(registry, &cyclic2).0;
-
-        let sum: SmallVec<[_; 4]> = smallvec![id0, id1, id2];
-        let sum_class = egraph.add(ENode::Sum(sum));
+        // The coefficients now come back from `add_monomial` rather
+        // than riding inside the term, so the identity is injected as
+        // the weighted sum it always was -- canonicalisation's sign
+        // included.
+        let t0 = egraph.add_monomial(registry, &m);
+        let t1 = egraph.add_monomial(registry, &cyclic1);
+        let t2 = egraph.add_monomial(registry, &cyclic2);
+        let sum_class = egraph.add_sum([t0, t1, t2]);
         let zero = egraph.zero();
         egraph.union(sum_class, zero);
     }
@@ -133,6 +135,7 @@ mod tests {
     use super::*;
     use crate::extract;
     use oderom_core::{Perm, Scalar, SignedPerm, SlotSig, Variance};
+    use smallvec::smallvec;
 
     fn riemann_registry() -> (Registry, HeadId) {
         let mut reg = Registry::new();
@@ -166,10 +169,10 @@ mod tests {
         let m3 = riemann_free(r, &registry, ["a", "d", "b", "c"]);
 
         let mut eg = EGraph::new();
-        let id1 = eg.add_monomial(&registry, &m1).0;
-        let id2 = eg.add_monomial(&registry, &m2).0;
-        let id3 = eg.add_monomial(&registry, &m3).0;
-        let sum = eg.add(ENode::Sum(smallvec![id1, id2, id3]));
+        let p1 = eg.add_monomial(&registry, &m1);
+        let p2 = eg.add_monomial(&registry, &m2);
+        let p3 = eg.add_monomial(&registry, &m3);
+        let sum = eg.add_sum([p1, p2, p3]);
 
         apply_bianchi(&mut eg, &registry, r);
 
@@ -185,10 +188,10 @@ mod tests {
         let m3 = riemann_free(r, &registry, ["a", "d", "b", "c"]);
 
         let mut eg = EGraph::new();
-        let id1 = eg.add_monomial(&registry, &m1).0;
-        let id2 = eg.add_monomial(&registry, &m2).0;
-        let id3 = eg.add_monomial(&registry, &m3).0;
-        let sum = eg.add(ENode::Sum(smallvec![id1, id2, id3]));
+        let p1 = eg.add_monomial(&registry, &m1);
+        let p2 = eg.add_monomial(&registry, &m2);
+        let p3 = eg.add_monomial(&registry, &m3);
+        let sum = eg.add_sum([p1, p2, p3]);
 
         let result = extract(&mut eg, sum);
         assert_eq!(result.terms.len(), 3);
@@ -234,10 +237,10 @@ mod tests {
         let m3 = dr_free(r, &mut registry, ["a", "b", "e", "c", "d"]);
 
         let mut eg = EGraph::new();
-        let id1 = eg.add_monomial(&registry, &m1).0;
-        let id2 = eg.add_monomial(&registry, &m2).0;
-        let id3 = eg.add_monomial(&registry, &m3).0;
-        let sum = eg.add(ENode::Sum(smallvec![id1, id2, id3]));
+        let p1 = eg.add_monomial(&registry, &m1);
+        let p2 = eg.add_monomial(&registry, &m2);
+        let p3 = eg.add_monomial(&registry, &m3);
+        let sum = eg.add_sum([p1, p2, p3]);
 
         apply_second_bianchi(&mut eg, &registry, r);
 
@@ -253,10 +256,10 @@ mod tests {
         let m3 = dr_free(r, &mut registry, ["a", "b", "e", "c", "d"]);
 
         let mut eg = EGraph::new();
-        let id1 = eg.add_monomial(&registry, &m1).0;
-        let id2 = eg.add_monomial(&registry, &m2).0;
-        let id3 = eg.add_monomial(&registry, &m3).0;
-        let sum = eg.add(ENode::Sum(smallvec![id1, id2, id3]));
+        let p1 = eg.add_monomial(&registry, &m1);
+        let p2 = eg.add_monomial(&registry, &m2);
+        let p3 = eg.add_monomial(&registry, &m3);
+        let sum = eg.add_sum([p1, p2, p3]);
 
         let result = extract(&mut eg, sum);
         assert_eq!(result.terms.len(), 3);
@@ -274,12 +277,10 @@ mod tests {
 
         // First identity declared, differential sum offered: no reduction.
         let mut eg = EGraph::new();
-        let ids: SmallVec<[_; 4]> = smallvec![
-            eg.add_monomial(&registry, &d1).0,
-            eg.add_monomial(&registry, &d2).0,
-            eg.add_monomial(&registry, &d3).0,
-        ];
-        let sum = eg.add(ENode::Sum(ids));
+        let p1 = eg.add_monomial(&registry, &d1);
+        let p2 = eg.add_monomial(&registry, &d2);
+        let p3 = eg.add_monomial(&registry, &d3);
+        let sum = eg.add_sum([p1, p2, p3]);
         apply_bianchi(&mut eg, &registry, r);
         assert_eq!(extract(&mut eg, sum).terms.len(), 3, "first Bianchi must not reduce a differential sum");
 
@@ -288,12 +289,10 @@ mod tests {
         let a2 = riemann_free(r, &registry, ["a", "c", "d", "b"]);
         let a3 = riemann_free(r, &registry, ["a", "d", "b", "c"]);
         let mut eg = EGraph::new();
-        let ids: SmallVec<[_; 4]> = smallvec![
-            eg.add_monomial(&registry, &a1).0,
-            eg.add_monomial(&registry, &a2).0,
-            eg.add_monomial(&registry, &a3).0,
-        ];
-        let sum = eg.add(ENode::Sum(ids));
+        let p1 = eg.add_monomial(&registry, &a1);
+        let p2 = eg.add_monomial(&registry, &a2);
+        let p3 = eg.add_monomial(&registry, &a3);
+        let sum = eg.add_sum([p1, p2, p3]);
         apply_second_bianchi(&mut eg, &registry, r);
         assert_eq!(extract(&mut eg, sum).terms.len(), 3, "second Bianchi must not reduce an algebraic sum");
     }

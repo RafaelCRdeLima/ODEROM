@@ -101,6 +101,14 @@ coefficient into the sum is what makes the match expressible at all.
 R2's stated acceptance criterion is the differential twin of this
 (`R[a,b,[c,d;e]]`); the algebraic one belongs there too.
 
+**After R1b** (`SumNode` carrying coefficients): output is byte-identical, and
+the bucket does not move. That is the expected result, not a disappointment --
+R1b removes the *representational* obstacle (the three terms now live in one
+`SumNode` keyed by coefficient-1 e-classes, so a k-term identity finally has a
+key to match on) while matching itself is still R2/R3. The user-visible surface
+was already normalised by `collect_like_terms` after extraction, so nothing
+changed there. W1-16 therefore stays `VACUOUS (pending W1-15)`.
+
 ### W1-16 — VACUOUS, pending W1-15
 
 W1-15 and W1-16 produce **identical output**, i.e. `--bianchi` makes no

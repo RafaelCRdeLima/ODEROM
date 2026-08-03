@@ -16,8 +16,9 @@
 use crate::union_find::UnionFind;
 use oderom_canon::canonicalize;
 use oderom_core::{Monomial, Registry, Scalar};
+use std::hash::Hash;
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
+use std::collections::BTreeMap;
 
 /// An index into an [`EGraph`]'s e-classes. Not stable across `union`:
 /// always pass it through [`EGraph::find`] (or a method that already
@@ -26,13 +27,99 @@ use smallvec::SmallVec;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EClassId(u32);
 
-/// One way to build a value: either a single already-canonical monomial,
-/// or the sum of several e-classes' values. `Sum([])` is the canonical
-/// representation of zero.
+/// A sum of e-classes, each weighted by an exact rational.
+///
+/// Three properties fall out of the representation rather than out of a
+/// pass over it:
+///
+/// 1. **Collection is construction.** Inserting a term that is already
+///    present adds the coefficients, so like terms can never coexist
+///    uncollected. An earlier attempt to collect *before* the e-graph
+///    failed, and "it ran at the wrong layer" was only the symptom --
+///    the cause is that the old representation had no collection key at
+///    all, because the coefficient lived inside `Term` and so
+///    `3*R[a,b,c,d]` and `R[a,b,c,d]` were different e-classes.
+/// 2. **AC normal form for free.** Keying by `EClassId` gives
+///    associativity, commutativity and a deterministic output order
+///    with no extra pass.
+/// 3. **Zero terms disappear.** A coefficient that reaches zero removes
+///    its entry rather than being kept as a zero value, so the empty
+///    map is the one representation of zero.
+///
+/// The flattening guarantee is **construction-time, not closure**:
+/// nested sums are spliced when built, but an e-class can become equal
+/// to a sum *later* via `union`, and nothing re-flattens it. Doing that
+/// by congruence is R2/R3 (DESIGN-TENSOR-ALGEBRA.md), not this round.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct SumNode {
+    terms: BTreeMap<EClassId, Scalar>,
+}
+
+impl SumNode {
+    pub fn new() -> Self {
+        SumNode::default()
+    }
+
+    /// Adds `coeff * term`, collecting into any entry already present
+    /// and removing the entry entirely if the total reaches zero.
+    pub fn insert(&mut self, term: EClassId, coeff: Scalar) {
+        if coeff.is_zero() {
+            return;
+        }
+        let total = self.terms.get(&term).copied().unwrap_or(Scalar::ZERO) + coeff;
+        if total.is_zero() {
+            self.terms.remove(&term);
+        } else {
+            self.terms.insert(term, total);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (EClassId, Scalar)> + '_ {
+        self.terms.iter().map(|(&id, &c)| (id, c))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.terms.len()
+    }
+}
+
+impl FromIterator<(EClassId, Scalar)> for SumNode {
+    fn from_iter<I: IntoIterator<Item = (EClassId, Scalar)>>(iter: I) -> Self {
+        let mut s = SumNode::new();
+        for (id, c) in iter {
+            s.insert(id, c);
+        }
+        s
+    }
+}
+
+/// `Hash` by hand because `BTreeMap` hashes in key order, which is what
+/// hash-consing needs, but `Scalar` is only `Hash` as a value -- the
+/// derive would be correct and this is written out only so that the
+/// ordering dependence is visible at the point it matters.
+impl std::hash::Hash for SumNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for (id, c) in &self.terms {
+            id.hash(state);
+            c.hash(state);
+        }
+    }
+}
+
+/// One way to build a value: either a single already-canonical monomial
+/// **with coefficient 1**, or a coefficient-carrying sum of e-classes.
+/// `Sum(empty)` is the canonical representation of zero.
+///
+/// The coefficient-1 rule on `Term` is the whole point of R1b: it is
+/// what gives two scalings of the same monomial a common key.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ENode {
     Term(Monomial),
-    Sum(SmallVec<[EClassId; 4]>),
+    Sum(SumNode),
 }
 
 /// A set of e-classes over [`ENode`]s, with hash-consing and
@@ -85,15 +172,53 @@ impl EGraph {
         match canonicalize(m, registry).expect("m was already validated by Monomial::try_new") {
             oderom_canon::CanonResult::Zero => (self.zero(), Scalar::ZERO),
             oderom_canon::CanonResult::Value(c) => {
+                // R1b: the coefficient leaves the term. The e-class key
+                // is the coefficient-1 monomial, so every scaling of the
+                // same shape lands in one e-class and a `SumNode` can
+                // collect them.
                 let coeff = c.monomial.coeff();
-                (self.add(ENode::Term(c.monomial)), coeff)
+                // A zero coefficient contributes no term at all, the
+                // same as `CanonResult::Zero` -- and it is also the one
+                // case with no reciprocal to normalise by.
+                let Some(inv) = coeff.recip() else { return (self.zero(), Scalar::ZERO) };
+                let key = c.monomial.scaled(inv);
+                (self.add(ENode::Term(key)), coeff)
             }
         }
     }
 
     /// The e-class for the empty sum, i.e. zero.
     pub fn zero(&mut self) -> EClassId {
-        self.add(ENode::Sum(SmallVec::new()))
+        self.add(ENode::Sum(SumNode::new()))
+    }
+
+    /// Builds a sum from `(e-class, coefficient)` pairs, splicing any
+    /// pair whose e-class is *already* a sum so that nested sums do not
+    /// survive construction. Coefficients multiply through the splice.
+    ///
+    /// Construction-time only, per `SumNode`'s doc comment: an e-class
+    /// that becomes a sum later via `union` is not re-spliced here.
+    pub fn add_sum(&mut self, pairs: impl IntoIterator<Item = (EClassId, Scalar)>) -> EClassId {
+        let mut acc = SumNode::new();
+        for (id, coeff) in pairs {
+            let root = self.find(id);
+            let inner: Option<SumNode> = self
+                .classes
+                .get(&root)
+                .and_then(|nodes| nodes.iter().find_map(|n| match n {
+                    ENode::Sum(s) => Some(s.clone()),
+                    _ => None,
+                }));
+            match inner {
+                Some(s) => {
+                    for (child, c) in s.iter() {
+                        acc.insert(child, c * coeff);
+                    }
+                }
+                None => acc.insert(root, coeff),
+            }
+        }
+        self.add(ENode::Sum(acc))
     }
 
     /// Asserts `a` and `b` denote the same value.
@@ -113,9 +238,17 @@ impl EGraph {
     fn canonicalize_node(&mut self, node: &ENode) -> ENode {
         match node {
             ENode::Term(m) => ENode::Term(m.clone()),
-            ENode::Sum(children) => {
-                let mut canon: SmallVec<[EClassId; 4]> = children.iter().map(|&c| self.find(c)).collect();
-                canon.sort_by_key(|c| c.0);
+            // `find` can map two distinct keys onto the same
+            // representative, so this re-inserts rather than rebuilding
+            // the map directly: the merge has to add coefficients, and
+            // can cancel a pair to nothing.
+            ENode::Sum(s) => {
+                let pairs: Vec<(EClassId, Scalar)> = s.iter().collect();
+                let mut canon = SumNode::new();
+                for (c, k) in pairs {
+                    let r = self.find(c);
+                    canon.insert(r, k);
+                }
                 ENode::Sum(canon)
             }
         }
@@ -166,7 +299,7 @@ impl EGraph {
 mod tests {
     use super::*;
     use oderom_core::{AbstractIndex, Factor, HeadId, Matching, Scalar, SlotId, SlotSig, Variance};
-    use smallvec::smallvec;
+    use smallvec::{smallvec, SmallVec};
 
     /// A single-slot, unconstrained head "V", just for exercising the
     /// e-graph plumbing without dragging in a full Riemann setup.
@@ -224,8 +357,8 @@ mod tests {
         let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
         let c = eg.add_monomial(&reg, &vector_monomial(v, &reg, "z")).0;
 
-        let sum_ac = eg.add(ENode::Sum(smallvec![a, c]));
-        let sum_bc = eg.add(ENode::Sum(smallvec![b, c]));
+        let sum_ac = eg.add_sum([(a, Scalar::ONE), (c, Scalar::ONE)]);
+        let sum_bc = eg.add_sum([(b, Scalar::ONE), (c, Scalar::ONE)]);
         assert_ne!(eg.find(sum_ac), eg.find(sum_bc));
 
         eg.union(a, b);
@@ -239,16 +372,52 @@ mod tests {
         let mut eg = EGraph::new();
         let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
         let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
-        let sum_ab = eg.add(ENode::Sum(smallvec![a, b]));
-        let sum_ba = eg.add(ENode::Sum(smallvec![b, a]));
+        let sum_ab = eg.add_sum([(a, Scalar::ONE), (b, Scalar::ONE)]);
+        let sum_ba = eg.add_sum([(b, Scalar::ONE), (a, Scalar::ONE)]);
         assert_eq!(eg.find(sum_ab), eg.find(sum_ba));
+    }
+
+    /// `(T+S)+U` and `T+(S+U)` must build the same `SumNode`. The CLI's
+    /// surface syntax cannot express a nested sum, so this is the only
+    /// place the associativity half of "AC normal form for free" is
+    /// checked.
+    #[test]
+    fn nested_sums_flatten_to_the_same_node_either_way() {
+        let (reg, v) = vector_registry();
+        let mut eg = EGraph::new();
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+        let b = eg.add_monomial(&reg, &vector_monomial(v, &reg, "y")).0;
+        let c = eg.add_monomial(&reg, &vector_monomial(v, &reg, "z")).0;
+
+        let ab = eg.add_sum([(a, Scalar::ONE), (b, Scalar::ONE)]);
+        let left = eg.add_sum([(ab, Scalar::ONE), (c, Scalar::ONE)]);
+
+        let bc = eg.add_sum([(b, Scalar::ONE), (c, Scalar::ONE)]);
+        let right = eg.add_sum([(a, Scalar::ONE), (bc, Scalar::ONE)]);
+
+        assert_eq!(eg.find(left), eg.find(right));
+    }
+
+    /// Coefficients multiply through the splice, and a nested sum that
+    /// cancels against an outer term leaves nothing behind.
+    #[test]
+    fn splicing_multiplies_coefficients_and_can_cancel_to_zero() {
+        let (reg, v) = vector_registry();
+        let mut eg = EGraph::new();
+        let a = eg.add_monomial(&reg, &vector_monomial(v, &reg, "x")).0;
+
+        // 2*(3*a) + (-6)*a  ==  0
+        let inner = eg.add_sum([(a, Scalar::from_int(3))]);
+        let outer = eg.add_sum([(inner, Scalar::from_int(2)), (a, Scalar::from_int(-6))]);
+        let z = eg.zero();
+        assert_eq!(eg.find(outer), eg.find(z));
     }
 
     #[test]
     fn zero_is_the_empty_sum_and_is_unique() {
         let mut eg = EGraph::new();
         let z1 = eg.zero();
-        let z2 = eg.add(ENode::Sum(SmallVec::new()));
+        let z2 = eg.add(ENode::Sum(SumNode::new()));
         assert_eq!(eg.find(z1), eg.find(z2));
     }
 }

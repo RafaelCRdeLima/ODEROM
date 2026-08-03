@@ -63,8 +63,8 @@ fn node_cost(node: &ENode, best: &FxHashMap<EClassId, Best>) -> Option<usize> {
         ENode::Term(_) => Some(1),
         ENode::Sum(children) => {
             let mut total = 0;
-            for c in children {
-                total += best.get(c)?.cost;
+            for (c, _) in children.iter() {
+                total += best.get(&c)?.cost;
             }
             Some(total)
         }
@@ -81,12 +81,17 @@ fn reconstruct(egraph: &mut EGraph, best: &FxHashMap<EClassId, Best>, id: EClass
         // than panicking on a graph built some other way.
         None => Polynomial { terms: vec![] },
         Some(b) => match &b.node {
+            // A `Term` carries coefficient 1 by construction (R1b);
+            // the scaling lives in whichever `Sum` refers to it, and is
+            // pushed back in below. Extracting a bare `Term` e-class
+            // therefore yields the coefficient-1 monomial, which is the
+            // honest answer: the coefficient is contextual now.
             ENode::Term(m) => Polynomial { terms: vec![m.clone()] },
             ENode::Sum(children) => {
-                let children = children.clone();
+                let pairs: Vec<_> = children.iter().collect();
                 let mut terms = Vec::new();
-                for c in children {
-                    terms.extend(reconstruct(egraph, best, c).terms);
+                for (c, coeff) in pairs {
+                    terms.extend(reconstruct(egraph, best, c).terms.into_iter().map(|m| m.scaled(coeff)));
                 }
                 Polynomial { terms }
             }
