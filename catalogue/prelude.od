@@ -19,3 +19,10 @@ head T : TM*, TM*
 head V : TM*
 head xi : TM*
 head J : TM*
+
+# Added for wave two: the derived curvature tensors, so that identities
+# stated about them can at least be *written* even where deriving them
+# needs a later round.
+head Ric : TM*, TM* symmetry (1 2)+
+head G : TM*, TM* symmetry (1 2)+
+head C : TM*, TM*, TM*, TM* symmetry (1 2)- (3 4)- (1 3)(2 4)+
