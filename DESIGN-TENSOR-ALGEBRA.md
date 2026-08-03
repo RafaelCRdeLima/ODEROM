@@ -533,3 +533,23 @@ R0. Um relatório de números, nenhuma mudança de comportamento, mais a checage
 convenção do item 10.4. Posso escrever o prompt formal em inglês para o Claude Code
 quando você quiser — mas o conteúdo de R0 é curto o bastante que talvez você prefira
 pedir direto.
+
+---
+
+## Questão aberta para R3 — transbordo na eliminação
+
+Registrada em R1, deliberadamente **não decidida** aqui, e sem influência sobre
+o desenho de R1.
+
+Os coeficientes da soma são `oderom_core::Scalar { num: i64, den: i64 }`. Isso
+basta para R1, onde as operações são somas de coeficientes vindos de
+canonicalização. Não basta para R3: eliminação gaussiana sobre ℚ faz numerador e
+denominador crescerem a cada pivô, e R0 mediu estratos de até 63 colunas — o
+suficiente para estourar `i64` com folga.
+
+As saídas usuais são Bareiss livre de frações em `i128`, aritmética de precisão
+arbitrária, ou modular com reconstrução racional. `oderom-expr` já tem
+`BigScalar`, mas está fora de escopo até R7, e importá-lo antes disso acoplaria
+as duas metades justamente na rodada em que elas ainda não se falam.
+
+Decidir isto é pré-requisito de R3, não de R2.

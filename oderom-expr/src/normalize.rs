@@ -1138,7 +1138,49 @@ mod tests {
         // (a suíte inteira do workspace continua rodando em segundos com
         // isso ligado) -- sem motivo para economizar aqui. Mesma
         // convenção de `oderom-canon/tests/prop_canon.rs`.
-        #![proptest_config(ProptestConfig::with_cases(10_000))]
+        // `fork` + `timeout`, added after `v2_is_idempotent` drew an
+        // input on which `normalize` does not terminate and spun 5h37m
+        // at 100% CPU inside a full-workspace run, producing no output
+        // and losing the input: proptest persists *failures*, and a hang
+        // is not one. Each case now runs in a child process that is
+        // killed from outside when it overruns, which turns the hang
+        // into a reported failure -- so shrinking runs, the expression
+        // is printed, and the seed lands in `proptest-regressions/`.
+        //
+        // Killing from outside is the point. `check_cancelled` exists
+        // only in `rational_function.rs`; `normalize`'s own rewrite loop
+        // has no checkpoint, so cancellation-based interruption is not
+        // known to reach the loop that spins.
+        //
+        // Caveat worth knowing when one of these fires: proptest reports
+        // a timeout as `failed in other process`, the same wording it
+        // uses for a child that crashed. The two are not distinguishable
+        // from the message alone.
+        // The ceiling is per profile, and that is a declared choice.
+        //
+        // A single fixed number cannot mean the same thing in both:
+        // `(r^-3 + M + x + 1)^3` -- the input the generator drew that
+        // started this -- costs 3.18s in release and ~29s in debug, a
+        // measured 9x. Five seconds in debug is about half a second of
+        // real work, which misclassifies merely-slow inputs as broken;
+        // five seconds in release is the bound we actually want. So the
+        // debug ceiling is scaled rather than shared.
+        //
+        // What a failure here means: the case did not finish in time.
+        // It does NOT mean non-termination. That distinction cost 5h37m
+        // of wall clock and two rounds of wrong diagnosis -- the first
+        // report of this called it a hang, and it was slowness.
+        //
+        // No wall-clock assertion is made about any specific input.
+        // Timing assertions have produced four false alarms in this
+        // project (see DESIGN-RATIONAL-FORM.md); the ceiling exists to
+        // bound suite runtime, not to police performance.
+        #![proptest_config(ProptestConfig {
+            cases: 10_000,
+            fork: true,
+            timeout: if cfg!(debug_assertions) { 45_000 } else { 5_000 },
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn v1_and_v2_agree(e in arb_expr()) {
@@ -1157,8 +1199,20 @@ mod tests {
         /// either being wrong).
         #[test]
         fn v2_is_idempotent(e in arb_expr()) {
+            // M2: which of the two calls spins? The distinction decides
+            // the diagnosis. If the first hangs, the defect has nothing
+            // to do with idempotence -- this test is merely where it
+            // surfaced, being a property over `arb_expr()`, and any such
+            // property can hit it. If the second hangs, there is a real
+            // cycle between two normal forms.
+            //
+            // Written to stderr *before* each call, so the last line the
+            // killed child emitted names the call that did not return.
+            eprintln!("v2_is_idempotent: entering FIRST normalize on {e:?}");
             let once = normalize(&e);
+            eprintln!("v2_is_idempotent: FIRST returned; entering SECOND normalize on {once:?}");
             let twice = normalize(&once);
+            eprintln!("v2_is_idempotent: SECOND returned");
             if let Err(msg) = values_agree(&once, &twice) {
                 prop_assert!(false, "value changed on re-normalizing {:?}: {msg} (once={:?} twice={:?})", e, once, twice);
             }

@@ -1116,3 +1116,11 @@ seguinte. A API pública não muda: `normalize_localized` e os
 interna deixa de propagá-lo. **Não implementado** — proposta, aguardando
 decisão, e independente da Fase 2 (não altera nenhuma assinatura que o
 CLI use).
+
+## Regra de medição
+
+Todo tempo reportado declara o **perfil de compilação** e o **estado da máquina**,
+ou não é um número. Quatro medições neste projeto foram lidas errado por omitir
+um dos dois: uma regressão de 20-30% que não existia, um `falharam=1` causado por
+carga que eu mesmo gerei, um "travamento" que era lentidão, e "26 segundos" que
+eram 3,18s (debug contra release, fator 9x).

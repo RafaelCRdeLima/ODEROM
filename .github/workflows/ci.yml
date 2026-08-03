@@ -29,6 +29,13 @@ jobs:
   test-debug:
     name: cargo test (debug)
     runs-on: ubuntu-latest
+    # GitHub's default job timeout is 360 minutes. A property test that
+    # draws a non-terminating input burns all of it before anyone learns
+    # anything -- `normalize::tests::v2_is_idempotent` did exactly that
+    # locally, spinning 5h37m at 100% CPU with no output. The whole
+    # workspace suite runs in ~25 minutes, so this bounds the failure
+    # class without any room for a false timeout.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -38,6 +45,8 @@ jobs:
   test-release:
     name: cargo test (release)
     runs-on: ubuntu-latest
+    # Same bound as the debug job, and for the same reason.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
