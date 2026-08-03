@@ -553,3 +553,166 @@ arbitrária, ou modular com reconstrução racional. `oderom-expr` já tem
 as duas metades justamente na rodada em que elas ainda não se falam.
 
 Decidir isto é pré-requisito de R3, não de R2.
+
+---
+
+# Achados do catálogo (48 entradas, `catalogue/tensor-identities.md`)
+
+Quatro achados que não existiam em lugar nenhum deste plano. Registrados aqui
+porque uma rodada que passa sem escrevê-los é uma rodada em que eles se perdem
+entre sessões — e é assim que um plano deixa de descrever o sistema que governa.
+
+## Achado 1 — heads de rank 0 são rejeitados, e isso bloqueia a meta do próprio plano
+
+`head Rs :` falha com `expected an identifier, found Eof`. O escalar de Ricci não
+pode ser declarado.
+
+**Consequência local**, registrada no catálogo: `∇_a R = 2∇^b R_ab` e o traço do
+tensor de Einstein não puderam ser escritos como entradas.
+
+**Consequência maior:** a meta transversal deste plano é `∇^a G_ab = 0`. A
+derivação contrai a segunda identidade de Bianchi duas vezes e **produz `∇_a R`**.
+Sem escalar declarável, o critério de aceitação de R1–R3 não é enunciável hoje.
+
+### Deliberado ou omissão: **omissão no parser, mais uma questão de design real embaixo**
+
+Verificado, não suposto:
+
+- `parse_head_decl` (`oderom-cli/src/parser.rs:992`) abre um `loop` que chama
+  `toks.ident()?` **antes** de testar o terminador. A aridade mínima 1 é artefato
+  do formato do laço — não há guarda, não há comentário justificando, não há
+  mensagem de erro que mencione rank 0.
+- `Registry::declare_head` (`oderom-core/src/registry.rs:89`) **não** rejeita
+  `slots` vazio. Valida apenas que a aridade dos geradores bate com `slots.len()`.
+  O núcleo aceitaria um head de rank 0.
+
+Até aqui é omissão. Mas há um ponto onde rank 0 não é só destravar o parser:
+
+- `Registry::derivative_head` (`registry.rs:145`) faz
+  `base_head.slots.first().ok_or(CoreError::UnknownHead(...))` — ele deriva a
+  assinatura do slot de derivada **do primeiro slot da base**, para manter
+  bundle e dimensão consistentes sem inventá-los. Um head de rank 0 não tem
+  primeiro slot, e `∇_a R` falharia com `UnknownHead`, que é uma mensagem
+  enganosa para essa causa.
+
+Ou seja: suportar rank 0 exige decidir **de onde vem o bundle/dimensão do índice
+de derivada** quando não há slot de onde copiar. Isso é decisão de design, não
+conserto de parser, e é exatamente o caso de que a meta de aceitação precisa —
+`∇_a R` é derivada de um escalar.
+
+**Merece rodada própria, e vem antes de R3.** O escopo é maior do que "o parser
+tem um buraco".
+
+## Achado 2 — axiomas não podem ser declarados
+
+W2-07 (`∇_[a F_bc] = 0`), W2-09/W2-10 (Killing) e W2-14 (traços de Weyl) falham
+por **uma** razão compartilhada que não é R4, R5 nem R6: `--bianchi`,
+`--bianchi2` e `--metric-compatible` estão cada uma cabeada a uma identidade
+específica de um tensor específico. Não há como dizer "este head antissimétrico
+satisfaz esta identidade".
+
+As quatro **expandiram corretamente** — antissimetrização, simetrização e
+contração com a métrica fizeram seu trabalho e produziram a expressão certa não
+reduzida. Falta apenas a declaração.
+
+**Questão aberta:** isto é provavelmente **a mesma capacidade de R6
+(substituição) vista do outro lado**. R6 generaliza *reescrita* para regras
+declaradas pelo usuário; isto generaliza *axiomas* para identidades declaradas
+pelo usuário. A especificação de R6 não deveria ser escrita antes disto ser
+resolvido, ou as duas serão desenhadas duas vezes.
+
+**Inferido, não instrumentado:** que as quatro entradas compartilhem causa única.
+A leitura vem da forma das flags existentes, não de instrumentação do casador.
+
+## Achado 3 — a metade abstrata não tem interface
+
+Nenhuma das 48 entradas do catálogo é alcançável pelo notebook. A gramática de
+consulta da sessão (`oderom-cli/src/parser.rs:434`, `parse_query`) não tem
+`canon` nem `simplify`; o app cobre só a metade de componentes. **O catálogo mede
+a CLI.**
+
+A decisão que isso implica tem **duas partes**, e elas têm valores muito
+diferentes:
+
+1. **Verbo de consulta** — a gramática ganha uma produção, a sessão um tipo de
+   entrada. Pequeno, e sozinho só move o terminal para dentro de uma caixa de
+   texto.
+2. **Declaração no documento** — heads, simetrias e o cenário abstrato precisam
+   viver num bloco `.od` para o verbo ter sobre o que operar. Isto não é mais uma
+   produção: é decidir **como um documento ODEROM declara um tensor abstrato**, e
+   é a mesma decisão de que R6 e o Achado 2 precisam.
+
+A segunda é a que produz informação.
+
+Conecta com o item 8 do catálogo: blocos `.od` **não foram necessários** para as
+48 entradas, e isso foi contorno, não sucesso — definições não puderam ser
+expressas de forma alguma, então o formato foi **contornado, não testado**. O
+catálogo ainda não é consumidor real da linguagem `.od` do lado abstrato. A
+janela é o que forçaria a questão.
+
+**Para quem ler depois:** a metade de componentes é apresentável (Kerr fecha,
+Kretschmann bate com a forma fechada, exportação funciona) e a metade abstrata
+está na rodada 1 de 8. Dar às duas o mesmo destaque numa janela sugeriria uma
+paridade de maturidade que não existe.
+
+## Achado 4 — a mensagem de erro de W2-01, contra R4
+
+`(V[a] V[b]);c` emite `parse error: expected a tensor factor, found Sym('(')`. A
+mensagem reclama de um parêntese; não diz que derivada de um produto não é
+representável. Quando R4 chegar, o erro que ele substitui é hoje indistinguível
+de um erro de digitação.
+
+Trivial de corrigir, não corrigido. Anexado a R4.
+
+## Também registrado
+
+### W1-15 começa em R1b, não em R2/R3
+
+`R[[a,b,c,d]]` com `--bianchi R` devolve `1/3 R[a,b,c,d] − 1/3 R[a,c,b,d] +
+1/3 R[a,d,b,c]`. O sistema expandiu 24 termos, colapsou para três, carregou os
+coeficientes racionais corretos e parou **exatamente** no casamento da
+identidade. Tudo até o último passo funcionou.
+
+O último passo não pode funcionar porque esses três termos **carregam
+coeficiente**, e o coeficiente ainda mora dentro de `ENode::Term` — logo
+`1/3 R[a,b,c,d]` e `R[a,b,c,d]` são e-classes diferentes e não há chave comum
+sobre a qual uma identidade de k termos pudesse reconhecê-los. **R1b é
+pré-requisito, não só R2/R3**, e o catálogo confirmou isso por um caminho
+independente do raciocínio que originou R1.
+
+### Vacuidade — princípio, não nota de rodapé
+
+**Um teste que não pode falhar não é um teste.** Duas espécies, e só uma precisa
+de substituição:
+
+- **Vacuidade permanente.** A fixture de convenção em de Sitter: uma métrica
+  maximamente simétrica tem `R_abcd = (1/L²)(g_ac g_bd − g_ad g_bc)`, contra a
+  qual as três simetrias de slot valem por construção para *qualquer* `g`
+  simétrico, e o ciclo de Bianchi cancela independentemente da convenção de ordem
+  de índices. Nenhum trabalho posterior conserta isso — **precisa de outra
+  fixture** (FRW, ou Kerr, cujo Weyl é rico; 2D e 3D não servem, pois lá o
+  Riemann é determinado pelo escalar e pelo Ricci respectivamente).
+- **Vacuidade temporária.** W1-16: passa só porque o caso positivo W1-15 também
+  falha. Resolve-se sozinha quando W1-15 virar A. **Precisa de marcação, não de
+  substituição** — e o catálogo carrega `VACUOUS (pending W1-15)` como campo, não
+  como prosa, justamente para que ninguém leia "16 verdes" e não saiba que um é
+  oco.
+
+---
+
+# Ordem reposicionada
+
+1. **R1b** — representação da soma. Destrava W1-15. O catálogo confirmou por
+   caminho independente que é pré-requisito, não otimização.
+2. **Heads de rank 0** (Achado 1) — antes de R3, porque a meta de aceitação de R3
+   precisa de `∇_a R`. Escopo maior que o parser: inclui decidir de onde vem a
+   assinatura do índice de derivada de um escalar.
+3. **`simplify` no notebook** (Achado 3) — depois de R1b, antes de R3. R1b muda a
+   representação da soma e a saída renderizada pode mudar junto; expor antes
+   significa refazer.
+4. **R3** — o motor linear de decisão.
+5. **Onda três do catálogo** — **depois** dos Achados 1 e 2 estarem resolvidos ou
+   explicitamente adiados, senão ela produz mais entradas contra a mesma parede.
+
+Achados 2 e 4 se anexam a rodadas existentes (R6 e R4 respectivamente) em vez de
+virarem rodadas próprias.
