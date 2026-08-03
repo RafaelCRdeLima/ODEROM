@@ -655,6 +655,23 @@ Kretschmann bate com a forma fechada, exportação funciona) e a metade abstrata
 está na rodada 1 de 8. Dar às duas o mesmo destaque numa janela sugeriria uma
 paridade de maturidade que não existe.
 
+### Duas notas de R1b que pertencem aqui
+
+**A sintaxe da CLI não expressa soma aninhada.** Foi por isso que o critério de
+associatividade de R1b — `(T+S)+U` idêntico a `T+(S+U)` — só pôde ser checado por
+teste unitário: não há como escrever os parênteses. Não é problema hoje. Vira
+problema quando `simplify` chegar ao notebook e alguém escrever parênteses,
+porque aí a gramática precisa de uma resposta e não tem.
+
+**O diff do catálogo não é instrumento sensível abaixo da extração.**
+`collect_like_terms` normaliza a superfície *depois* da extração, então uma
+mudança real na representação de baixo pode produzir catálogo byte a byte
+idêntico. R1b é o exemplo trabalhado: **zero diff nas 48 entradas, e a mudança
+era genuína** — o coeficiente saiu de `ENode::Term`, os termos passaram a viver
+num `SumNode` com chave, e nada disso aparece na saída porque a coleta já
+acontecia depois. Rodadas que tocam essa camada precisam de asserção em nível
+unitário, não do catálogo sozinho.
+
 ## Achado 4 — a mensagem de erro de W2-01, contra R4
 
 `(V[a] V[b]);c` emite `parse error: expected a tensor factor, found Sym('(')`. A
