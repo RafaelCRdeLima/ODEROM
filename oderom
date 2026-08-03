@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Launcher: `./oderom` opens the notebook window, `./oderom repl` the
+# terminal REPL, and anything else is forwarded verbatim to the CLI.
+#
+# The dispatch is on an explicit first word, never on argument count --
+# `./oderom` with no arguments opening the window is the one exception,
+# and it is the point of the file.
+#
+# `cargo tauri dev` takes no --manifest-path, so the UI cases cd into
+# oderom-app/src-tauri rather than pointing at it.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat <<'EOF'
+uso: ./oderom                     abre o notebook (janela Tauri)
+     ./oderom ui                  idem, explicito
+     ./oderom repl                REPL de terminal
+     ./oderom build-ui            empacota o binario da UI
+     ./oderom <subcomando> ...    encaminha para a CLI, p.ex.:
+                                    ./oderom kretschmann examples/kerr.od
+                                    ./oderom simplify --bianchi R "..."
+EOF
+}
+
+# Tauri's build.rs bakes absolute paths into its generated permission
+# files, so moving the repository leaves `target/` pointing at the old
+# location and the launch fails with a "failed to read plugin
+# permissions" error naming a directory that no longer exists. The fix
+# is to rebuild just that crate; doing it automatically saves the next
+# reader the twenty minutes it cost the first time. Scoped to the
+# `tauri` package on purpose -- a full `cargo clean` would throw away
+# the whole workspace's build cache to fix one crate's stale paths.
+run_ui() {
+    local log
+    log=$(mktemp)
+    if ! (cd oderom-app/src-tauri && cargo tauri dev "$@") 2>&1 | tee "$log"; then
+        if grep -q "failed to read plugin permissions" "$log"; then
+            echo
+            echo ">> caminhos absolutos obsoletos em target/ (o repositorio foi movido)."
+            echo ">> reconstruindo apenas o crate 'tauri' e tentando de novo..."
+            cargo clean -p tauri
+            (cd oderom-app/src-tauri && cargo tauri dev "$@")
+        else
+            rm -f "$log"
+            exit 1
+        fi
+    fi
+    rm -f "$log"
+}
+
+case "${1:-ui}" in
+    ui)
+        shift || true
+        run_ui "$@"
+        ;;
+    repl)
+        shift
+        exec cargo run --release -q -p oderom-repl -- "$@"
+        ;;
+    build-ui)
+        shift
+        cd oderom-app/src-tauri && exec cargo tauri build "$@"
+        ;;
+    -h | --help | help)
+        usage
+        ;;
+    *)
+        # Everything else is the CLI. Built in release: these are the
+        # subcommands that do real symbolic work, and debug is ~9x
+        # slower on this workspace's arithmetic (DESIGN-RATIONAL-FORM.md).
+        exec cargo run --release -q -p oderom-cli -- "$@"
+        ;;
+esac
