@@ -38,4 +38,21 @@ pub enum CoreError {
 
     #[error("free index label is bound to more than one slot: {0:?} and {1:?}")]
     DuplicateFreeLabel(SlotId, SlotId),
+
+    #[error(
+        "head `{head}` spans two manifolds: slot {first_slot} lives over `{first_manifold}` but slot {other_slot} lives over `{other_manifold}` -- a tensor head belongs to one manifold"
+    )]
+    HeadSpansManifolds {
+        head: String,
+        first_slot: usize,
+        first_manifold: String,
+        other_slot: usize,
+        other_manifold: String,
+    },
+
+    /// A head with no slots has no manifold to infer, and inventing one
+    /// would be guessing. Rank-0 heads need to name their manifold; how
+    /// they do is a language decision, deliberately not settled here.
+    #[error("head `{head}` has no slots, so there is no manifold to infer -- a rank-0 head must name its manifold")]
+    HeadWithoutManifold { head: String },
 }

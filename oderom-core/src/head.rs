@@ -2,7 +2,7 @@
 //! ...) that factors in a [`crate::monomial::Monomial`] refer to.
 
 use crate::perm::SignedPerm;
-use crate::registry::BundleId;
+use crate::registry::{BundleId, ManifoldId};
 use crate::symmetry::Bsgs;
 use smallvec::SmallVec;
 
@@ -43,6 +43,23 @@ pub struct HeadId(pub(crate) u32);
 pub struct TensorHead {
     pub id: HeadId,
     pub name: String,
+    /// The manifold this head lives over, held explicitly rather than
+    /// inferred from `slots` on demand.
+    ///
+    /// Before this field, `slots` was the *only* route from a head to a
+    /// manifold -- slot to bundle to `BundleDecl.base` -- and nothing
+    /// checked that a head's slots agreed. `head X : TM*, TN*` over two
+    /// different manifolds declared fine, and `X[a,a]` contracted a
+    /// dim-4 slot against a dim-3 one without a word. "The manifold of
+    /// a head" was therefore already ambiguous, with no scalar in
+    /// sight; a rank-0 head, which has no slots at all, only makes the
+    /// gap impossible to ignore.
+    ///
+    /// `declare_head` derives this from the slots and rejects
+    /// disagreement, so for rank >= 1 the field is a cache of a fact the
+    /// slots already determine. It becomes load-bearing at rank 0, where
+    /// there are no slots to determine it.
+    pub manifold: ManifoldId,
     pub slots: SmallVec<[SlotSig; 4]>,
     pub symmetry_generators: Vec<SignedPerm>,
     pub symmetry: Bsgs,
@@ -83,10 +100,11 @@ impl TensorHead {
     pub(crate) fn new(
         id: HeadId,
         name: String,
+        manifold: ManifoldId,
         slots: SmallVec<[SlotSig; 4]>,
         symmetry_generators: Vec<SignedPerm>,
     ) -> Self {
         let symmetry = Bsgs::from_generators(slots.len(), &symmetry_generators);
-        TensorHead { id, name, slots, symmetry_generators, symmetry, derivative_of: None }
+        TensorHead { id, name, manifold, slots, symmetry_generators, symmetry, derivative_of: None }
     }
 }

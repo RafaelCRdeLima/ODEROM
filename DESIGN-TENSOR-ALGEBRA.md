@@ -663,6 +663,18 @@ teste unitário: não há como escrever os parênteses. Não é problema hoje. V
 problema quando `simplify` chegar ao notebook e alguém escrever parênteses,
 porque aí a gramática precisa de uma resposta e não tem.
 
+**Questão aberta, a responder antes de R7: nada rejeita contração com dimensões
+incompatíveis.** A declaração multi-manifold agora falha antes (`declare_head`
+valida que todos os slots vivem sobre um manifold só), então o caminho que
+expunha isso está fechado. Mas a pergunta continua: se *nenhuma* camada rejeita
+contrair um slot de dimensão 4 contra um de dimensão 3, há um caminho pelo qual
+uma expressão geometricamente sem sentido atravessa o sistema inteiro sem parar
+— candidata a **bucket D** que o catálogo só não pegou porque nenhuma entrada
+mistura variedades. O README registra que compatibilidade de bundle/variância em
+contração é julgamento de `oderom-types`; **não verifiquei que `oderom-types` de
+fato rejeite**. R7 é onde as duas metades começam a se falar, e é tarde demais
+para descobrir isso lá.
+
 **O diff do catálogo não é instrumento sensível abaixo da extração.**
 `collect_like_terms` normaliza a superfície *depois* da extração, então uma
 mudança real na representação de baixo pode produzir catálogo byte a byte

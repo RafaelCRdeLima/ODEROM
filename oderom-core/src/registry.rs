@@ -102,10 +102,46 @@ impl Registry {
                 });
             }
         }
+        let manifold = self.manifold_of_slots(name, &slots)?;
         let id = HeadId(self.heads.len() as u32);
-        self.heads.push(TensorHead::new(id, name.to_string(), slots, symmetry_generators));
+        self.heads.push(TensorHead::new(id, name.to_string(), manifold, slots, symmetry_generators));
         self.names.insert(name.to_string(), NameEntry::Head(id));
         Ok(id)
+    }
+
+    /// The one manifold every slot's bundle is based on.
+    ///
+    /// Nothing checked this before, and it was not vacuous: `head X :
+    /// TM*, TN*` over two different manifolds declared without
+    /// complaint, and `X[a,a]` then contracted a dim-4 slot against a
+    /// dim-3 one. That is a geometrically meaningless expression
+    /// crossing the whole system unchallenged, so the check belongs at
+    /// declaration -- the earliest point where the answer is knowable.
+    ///
+    /// Checks *manifolds*, not bundles: several bundles over one
+    /// manifold in one head is ordinary and stays accepted.
+    ///
+    /// The empty case is an error for now rather than an invented
+    /// default. A rank-0 head has no slots to derive a manifold from,
+    /// which is precisely why it needs to name one, and deciding how it
+    /// does is the next round's job -- not something to settle here by
+    /// picking whichever manifold happens to be first.
+    fn manifold_of_slots(&self, head: &str, slots: &[SlotSig]) -> Result<ManifoldId, CoreError> {
+        let first = slots.first().ok_or_else(|| CoreError::HeadWithoutManifold { head: head.to_string() })?;
+        let manifold = self.bundle(first.bundle).base;
+        for (i, s) in slots.iter().enumerate().skip(1) {
+            let other = self.bundle(s.bundle).base;
+            if other != manifold {
+                return Err(CoreError::HeadSpansManifolds {
+                    head: head.to_string(),
+                    first_slot: 0,
+                    first_manifold: self.manifold(manifold).name.clone(),
+                    other_slot: i,
+                    other_manifold: self.manifold(other).name.clone(),
+                });
+            }
+        }
+        Ok(manifold)
     }
 
     /// The head representing `k` covariant derivatives of `base`, e.g.
@@ -135,6 +171,7 @@ impl Registry {
         }
 
         let base_head = self.head(base);
+        let base_manifold = base_head.manifold;
         let base_arity = base_head.arity();
         let total = base_arity + k as usize;
 
@@ -161,7 +198,17 @@ impl Registry {
             .collect();
 
         let id = HeadId(self.heads.len() as u32);
-        let mut head = TensorHead::new(id, name.clone(), slots, generators);
+        // The derivative head lives over the same manifold as its
+        // base -- differentiating does not move a tensor to another
+        // space. Note this does NOT change where the derivative slot's
+        // *bundle* comes from: it is still copied from the base's first
+        // slot, above. Changing that would need a notion of "the
+        // tangent bundle of M", which `Registry` does not have -- a
+        // manifold can carry several declared bundles and none is
+        // marked as the one `nabla` acts on. That is exactly the hinge
+        // the rank-0 round turns on, so it is left for that round
+        // rather than settled here by picking a bundle.
+        let mut head = TensorHead::new(id, name.clone(), base_manifold, slots, generators);
         head.derivative_of = Some((base, k));
         self.heads.push(head);
         self.names.insert(name, NameEntry::Head(id));
@@ -217,6 +264,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::head::Variance;
+    use smallvec::smallvec;
 
     #[test]
     fn declares_and_looks_up_manifold() {
@@ -243,6 +291,71 @@ mod tests {
         assert!(matches!(reg.lookup_manifold("M"), Err(CoreError::UnknownManifold(_))));
         assert!(matches!(reg.lookup_bundle("TM"), Err(CoreError::UnknownBundle(_))));
         assert!(matches!(reg.lookup_head("R"), Err(CoreError::UnknownHead(_))));
+    }
+
+    /// Checks *manifolds*, not bundles: two different bundles over one
+    /// manifold in one head is ordinary and must stay accepted. This is
+    /// the control that proves the validation is not just comparing
+    /// bundle ids.
+    #[test]
+    fn several_bundles_over_one_manifold_are_fine() {
+        let mut reg = Registry::new();
+        let m = reg.declare_manifold("M", 4).unwrap();
+        let tm = reg.declare_bundle("TM", m, 4).unwrap();
+        let e = reg.declare_bundle("E", m, 7).unwrap();
+        let slots: SmallVec<[SlotSig; 4]> = smallvec![
+            SlotSig { bundle: tm, variance: Variance::Co, dim: 4 },
+            SlotSig { bundle: e, variance: Variance::Co, dim: 7 },
+        ];
+        let y = reg.declare_head("Y", slots, vec![]).unwrap();
+        assert_eq!(reg.head(y).manifold, m);
+    }
+
+    /// The gap this field exists to close. Before it, this declared
+    /// without complaint and `Y[a,a]` then contracted a dim-4 slot
+    /// against a dim-3 one -- a geometrically meaningless expression
+    /// crossing the whole system unchallenged.
+    #[test]
+    fn a_head_spanning_two_manifolds_is_rejected_at_declaration() {
+        let mut reg = Registry::new();
+        let m = reg.declare_manifold("M", 4).unwrap();
+        let n = reg.declare_manifold("N", 3).unwrap();
+        let tm = reg.declare_bundle("TM", m, 4).unwrap();
+        let tn = reg.declare_bundle("TN", n, 3).unwrap();
+        let slots: SmallVec<[SlotSig; 4]> = smallvec![
+            SlotSig { bundle: tm, variance: Variance::Co, dim: 4 },
+            SlotSig { bundle: tn, variance: Variance::Co, dim: 3 },
+        ];
+        let err = reg.declare_head("X", slots, vec![]).unwrap_err();
+        let CoreError::HeadSpansManifolds { first_manifold, other_manifold, .. } = &err else {
+            panic!("expected HeadSpansManifolds, got {err:?}");
+        };
+        assert_eq!(first_manifold, "M");
+        assert_eq!(other_manifold, "N");
+    }
+
+    /// A rank-0 head has no slots to infer a manifold from, and
+    /// inventing one would be guessing. Naming it is the next round's
+    /// language decision; until then this is a named error, not a panic
+    /// on `slots[0]`.
+    #[test]
+    fn a_head_with_no_slots_is_a_named_error_not_a_panic() {
+        let mut reg = Registry::new();
+        reg.declare_manifold("M", 4).unwrap();
+        let err = reg.declare_head("Rs", SmallVec::new(), vec![]).unwrap_err();
+        assert!(matches!(err, CoreError::HeadWithoutManifold { .. }), "{err:?}");
+    }
+
+    /// Differentiating does not move a tensor to another space.
+    #[test]
+    fn a_derivative_head_keeps_its_base_manifold() {
+        let mut reg = Registry::new();
+        let m = reg.declare_manifold("M", 4).unwrap();
+        let tm = reg.declare_bundle("TM", m, 4).unwrap();
+        let slots: SmallVec<[SlotSig; 4]> = smallvec![SlotSig { bundle: tm, variance: Variance::Co, dim: 4 }];
+        let v = reg.declare_head("V", slots, vec![]).unwrap();
+        let dv = reg.derivative_head(v, 1).unwrap();
+        assert_eq!(reg.head(dv).manifold, m);
     }
 
     #[test]
