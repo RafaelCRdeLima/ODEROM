@@ -55,4 +55,19 @@ pub enum CoreError {
     /// they do is a language decision, deliberately not settled here.
     #[error("head `{head}` has no slots, so there is no manifold to infer -- a rank-0 head must name its manifold")]
     HeadWithoutManifold { head: String },
+
+    /// Which bundle `∇`'s index lives in cannot be decided. Deliberately
+    /// an error and not a choice: with one candidate there is nothing to
+    /// decide, and with more than one, guessing would put the derivative
+    /// index in a bundle of possibly the wrong dimension.
+    #[error(
+        "cannot tell which bundle a covariant derivative acts on over manifold `{manifold}`: {} candidates ({}) -- mark exactly one with `tangent`, as in `bundle {} on {manifold} dim N tangent`",
+        if *marked { "more than one is marked `tangent`" } else { "more than one bundle and none is marked" },
+        candidates.join(", "),
+        candidates.first().map(String::as_str).unwrap_or("TM")
+    )]
+    AmbiguousTangentBundle { manifold: String, candidates: Vec<String>, marked: bool },
+
+    #[error("manifold `{manifold}` has no declared bundle, so a covariant derivative has no index to live in")]
+    NoTangentBundle { manifold: String },
 }

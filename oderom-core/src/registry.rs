@@ -34,6 +34,13 @@ pub struct BundleDecl {
     pub name: String,
     pub base: ManifoldId,
     pub dim: u32,
+    /// Marked by `bundle TM on M dim 4 tangent`: this is the bundle a
+    /// covariant derivative's index lives in, over this manifold.
+    ///
+    /// Needed only to disambiguate. A manifold carrying exactly one
+    /// bundle resolves to it with no marker, which is why every
+    /// existing `.od` file works unedited.
+    pub tangent: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -75,9 +82,21 @@ impl Registry {
         base: ManifoldId,
         dim: u32,
     ) -> Result<BundleId, CoreError> {
+        self.declare_bundle_tangent(name, base, dim, false)
+    }
+
+    /// [`declare_bundle`] with the `tangent` marker set -- the bundle a
+    /// covariant derivative's index lives in over `base`.
+    pub fn declare_bundle_tangent(
+        &mut self,
+        name: &str,
+        base: ManifoldId,
+        dim: u32,
+        tangent: bool,
+    ) -> Result<BundleId, CoreError> {
         self.check_free_name(name)?;
         let id = BundleId(self.bundles.len() as u32);
-        self.bundles.push(BundleDecl { name: name.to_string(), base, dim });
+        self.bundles.push(BundleDecl { name: name.to_string(), base, dim, tangent });
         self.names.insert(name.to_string(), NameEntry::Bundle(id));
         Ok(id)
     }
@@ -142,6 +161,57 @@ impl Registry {
             }
         }
         Ok(manifold)
+    }
+
+    /// The bundle a covariant derivative's index lives in over
+    /// `manifold`.
+    ///
+    /// | bundles over the manifold | marked `tangent` | result |
+    /// |---|---|---|
+    /// | exactly 1 | either way | that one |
+    /// | more than 1 | exactly 1 | the marked one |
+    /// | more than 1 | none | error |
+    /// | any | more than 1 | error |
+    ///
+    /// The single-bundle default is not the kind of silent fallback
+    /// this project has been bitten by. Those chose between
+    /// alternatives and carried on -- the general engine catching the
+    /// localized one, a normalizer returning partial output. This one
+    /// never chooses: with one candidate there is nothing to choose,
+    /// and with two it stops. The ambiguous case is an error, not a
+    /// guess.
+    pub fn tangent_bundle(&self, manifold: ManifoldId) -> Result<BundleId, CoreError> {
+        let over: Vec<(BundleId, &BundleDecl)> = self
+            .bundles
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.base == manifold)
+            .map(|(i, b)| (BundleId(i as u32), b))
+            .collect();
+        let marked: Vec<&(BundleId, &BundleDecl)> = over.iter().filter(|(_, b)| b.tangent).collect();
+
+        let names = |v: &[&(BundleId, &BundleDecl)]| -> Vec<String> {
+            v.iter().map(|(_, b)| b.name.clone()).collect()
+        };
+        if marked.len() > 1 {
+            return Err(CoreError::AmbiguousTangentBundle {
+                manifold: self.manifold(manifold).name.clone(),
+                candidates: names(&marked),
+                marked: true,
+            });
+        }
+        if let Some((id, _)) = marked.first() {
+            return Ok(*id);
+        }
+        match over.len() {
+            0 => Err(CoreError::NoTangentBundle { manifold: self.manifold(manifold).name.clone() }),
+            1 => Ok(over[0].0),
+            _ => Err(CoreError::AmbiguousTangentBundle {
+                manifold: self.manifold(manifold).name.clone(),
+                candidates: over.iter().map(|(_, b)| b.name.clone()).collect(),
+                marked: false,
+            }),
+        }
     }
 
     /// The head representing `k` covariant derivatives of `base`, e.g.

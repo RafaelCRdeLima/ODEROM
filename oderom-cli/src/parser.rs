@@ -832,7 +832,16 @@ pub fn parse_model(src: &str) -> Result<Model, CliError> {
                 let manifold = model.registry.lookup_manifold(&manifold_name)?;
                 toks.expect_ident("dim")?;
                 let dim = toks.int()? as u32;
-                model.registry.declare_bundle(&name, manifold, dim)?;
+                // Optional trailing `tangent`: this is the bundle a
+                // covariant derivative's index lives in over `manifold`.
+                // Only needed to disambiguate -- a manifold with one
+                // bundle resolves to it unmarked, which is why every
+                // existing `.od` file parses unchanged.
+                let tangent = matches!(toks.peek(), Tok::Ident(kw) if kw == "tangent");
+                if tangent {
+                    toks.advance();
+                }
+                model.registry.declare_bundle_tangent(&name, manifold, dim, tangent)?;
             }
             Tok::Ident(kw) if kw == "head" => {
                 toks.advance();
