@@ -663,6 +663,14 @@ teste unitário: não há como escrever os parênteses. Não é problema hoje. V
 problema quando `simplify` chegar ao notebook e alguém escrever parênteses,
 porque aí a gramática precisa de uma resposta e não tem.
 
+**Sobre a palavra `tangent`, escolhida com reserva conhecida.** `bundle TM on M
+dim 4 tangent` marca em qual bundle o índice de uma derivada covariante vive. O
+que está sendo marcado, a rigor, **não é "este é o bundle tangente" e sim "este é
+o bundle em que a conexão age"** — e os dois não coincidem sempre. `tangent`
+venceu por ser a palavra que um leitor de GR reconhece, mas assa uma suposição na
+linguagem. Renomear depois quebra arquivos `.od` públicos, então a limitação fica
+registrada como conhecida, não como despercebida.
+
 **Questão aberta, a responder antes de R7: nada rejeita contração com dimensões
 incompatíveis.** A declaração multi-manifold agora falha antes (`declare_head`
 valida que todos os slots vivem sobre um manifold só), então o caminho que

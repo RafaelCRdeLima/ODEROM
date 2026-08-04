@@ -245,14 +245,24 @@ impl Registry {
         let base_arity = base_head.arity();
         let total = base_arity + k as usize;
 
-        // Derivative slots carry the same signature as the manifold's
-        // own covariant index: a derivative index is a lower index on
-        // the same bundle. Taking it from the base head's first slot
-        // keeps bundle/dimension consistent without inventing one.
-        let proto = *base_head.slots.first().ok_or(CoreError::UnknownHead(name.clone()))?;
-        let mut slots: SmallVec<[SlotSig; 4]> = base_head.slots.clone();
+        // A derivative index is a lower index in the bundle the
+        // connection acts on over this head's manifold -- resolved,
+        // not copied from the base's first slot.
+        //
+        // Copying from slot zero was an arbitrary choice that looked
+        // like a rule because every fixture declares one bundle. It is
+        // wrong the moment a head's first slot is in something else:
+        // `head Z : E*, TM*` with E of dimension 7 over M of dimension
+        // 4 produced a derivative index of dimension 7, measured before
+        // this change. Nothing declared such a head, so no signature in
+        // the project moves; the repair is for the case that was
+        // waiting rather than one that had fired.
+        let base_slots = base_head.slots.clone();
+        let tangent = self.tangent_bundle(base_manifold)?;
+        let proto = SlotSig { bundle: tangent, variance: Variance::Co, dim: self.bundle(tangent).dim };
+        let mut slots: SmallVec<[SlotSig; 4]> = base_slots;
         for _ in 0..k {
-            slots.push(SlotSig { variance: Variance::Co, ..proto });
+            slots.push(proto);
         }
 
         let generators: Vec<SignedPerm> = base_head

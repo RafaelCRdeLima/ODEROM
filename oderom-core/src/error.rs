@@ -61,7 +61,7 @@ pub enum CoreError {
     /// decide, and with more than one, guessing would put the derivative
     /// index in a bundle of possibly the wrong dimension.
     #[error(
-        "cannot tell which bundle a covariant derivative acts on over manifold `{manifold}`: {} candidates ({}) -- mark exactly one with `tangent`, as in `bundle {} on {manifold} dim N tangent`",
+        "cannot tell which bundle a covariant derivative acts on over manifold `{manifold}`: {} (candidates: {}) -- mark exactly one with `tangent`, as in `bundle {} on {manifold} dim N tangent`",
         if *marked { "more than one is marked `tangent`" } else { "more than one bundle and none is marked" },
         candidates.join(", "),
         candidates.first().map(String::as_str).unwrap_or("TM")
