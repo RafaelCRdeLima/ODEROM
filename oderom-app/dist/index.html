@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" href="favicon.ico" sizes="any" />
 <title>ODEROM</title>
 <link rel="stylesheet" href="vendor/codemirror/codemirror.css" />
 <link rel="stylesheet" href="vendor/katex/katex.min.css" />
@@ -20,19 +21,24 @@
 <header id="app-header">
   <div id="app-brand">
     <!--
-      Inline SVG, not <img src>: mark-on-dark.svg (assets/) is the mark-
-      only variant, no wordmark and no backing plate -- the dark header
-      background is the plate. The full logotype (logo-on-*.svg) is not
-      used here on purpose: #doc-name already spells the name out as
-      text right next to it, so the wordmark would be redundant in this
-      one spot. Kept inline (not <img>) so it composes with the page
-      like any other DOM node rather than an opaque bitmap/vector blob.
+      O simbolo sozinho (assets/oderom-simbolo.svg, copiado para ca),
+      sem logotipo e sem placa de fundo -- o cabecalho escuro E a placa.
+      A assinatura completa nao entra aqui de proposito: o #doc-name ao
+      lado ja escreve o nome, e o logotipo ficaria redundante neste
+      ponto exato. Ela e' usada no README e nos manuais.
+
+      `<img>` e nao SVG inline, ao contrario da marca anterior: aquela
+      eram tres paths, esta sao dez elipses tracadas ponto a ponto (61
+      KB) -- coladas aqui dentro, enterrariam o markup do cabecalho num
+      arquivo que se le a mao. Nada na pagina estiliza ou anima o
+      simbolo, entao compor com o DOM nao traz vantagem nenhuma que
+      pague esse preco.
+
+      `alt=""` de proposito: o nome do programa ja esta no #doc-name e
+      no <title>, e um leitor de tela anunciando "ODEROM" duas vezes
+      seguidas atrapalha em vez de ajudar.
     -->
-    <svg id="app-logo" viewBox="6.5 0 100 100" role="img" aria-label="ODEROM">
-      <path d="M78.07 41.06A32 32 0 1 1 58.94 21.93" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
-      <path d="M78.07 41.06L88.64 30.36" fill="none" stroke="#5DCAA5" stroke-width="6.5" stroke-linecap="round"/>
-      <path d="M95 24L92.5 34.2L84.7 26.5Z" fill="#5DCAA5"/>
-    </svg>
+    <img id="app-logo" src="oderom-simbolo.svg" alt="" />
     <span id="doc-name">sem título</span>
   </div>
   <div id="app-actions">

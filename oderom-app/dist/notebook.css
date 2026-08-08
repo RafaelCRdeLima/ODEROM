@@ -25,7 +25,7 @@
   --border: #e4e4ea;
   --bg: #f7f7fa;
   /* the header is a dark surface, everything else is light -- it's the
-     one place mark-on-dark.svg's white/light-green strokes are legible,
+     plate the mark sits on (the symbol has no backing plate of its own),
      and matching --ink itself (rather than a separate near-black) keeps
      it visually tied to the same "ink" the rest of the page's text
      uses. */
@@ -101,9 +101,18 @@ body {
   min-width: 0;
 }
 
+/* 32px, e nao os 26px que a marca anterior usava: o simbolo sao dez
+   elipses que precessionam 7 graus cada, e o guia da marca
+   (assets/marca-oderom.html) avisa que abaixo de 48px "a faixa cheia
+   vira textura". Aos 26px o degrade fecha num borrao ambar -- ainda um
+   O, mas sem a precessao, que e' justamente o que a marca diz. 32px e'
+   o maior que cabe sem alterar a altura do cabecalho (padding de
+   0.6rem contra um controle de ~30px), entao e' o melhor acordo
+   disponivel aqui; a versao simplificada de cinco voltas que o guia
+   descreve para tamanhos pequenos e' o favicon.ico. */
 #app-logo {
-  height: 26px;
-  width: 26px;
+  height: 32px;
+  width: 32px;
   flex-shrink: 0;
 }
 

@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-on-dark.svg">
-  <img src="assets/logo-on-light.svg" alt="ODEROM" width="360">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/oderom-logo-branco.svg">
+  <img src="assets/oderom-logo.svg" alt="ODEROM" width="380">
 </picture>
 
 Operational Differential Engine for Riemannian Object Manipulation. See
@@ -501,17 +501,22 @@ grows) and a per-block mouse "run" button (would compete with the
 keyboard for exactly the gesture a notebook wants to encourage -- the
 trailing empty block plus Shift/Ctrl/Alt-Enter already cover every way
 to create or run a block). The header is a dark bar showing the
-project's mark (`assets/mark-on-dark.svg`, inlined in the DOM, not
-`<img src>`) and the current notebook's filename -- the full wordmark
-isn't used there since the filename already spells the name out as
-text right next to the mark, which would make it redundant; the full
-wordmark (`assets/logo-on-light.svg`/`-on-dark.svg`) is for the README
-and any future "about" screen instead. Desktop/taskbar icons are
-rasterized from `assets/icon-launcher-1024.svg` (see
-`assets/README.md` for the full source-to-build mapping, including the
-separately hand-tuned 32px/16px sources) into
-`oderom-app/src-tauri/icons/`, referenced by `tauri.conf.json`'s
-`bundle.icon`.
+project's symbol (`assets/oderom-simbolo.svg`) and the current
+notebook's filename -- the full wordmark isn't used there since the
+filename already spells the name out as text right next to it, which
+would make it redundant; the full signature
+(`assets/oderom-logo.svg`, or `-branco` on dark) is for the README,
+the manuals, and any future "about" screen instead. Desktop/taskbar
+icons are rasterized from `assets/oderom-icone.svg` by
+`assets/gerar-icones.sh` into `oderom-app/src-tauri/icons/`,
+referenced by `tauri.conf.json`'s `bundle.icon`.
+
+The identity itself (`assets/marca-oderom.html` is the guide) is a
+precessing orbit: ten ellipses, each turned 7 degrees from the last,
+drawing an O in perspective with the star at perihelion. That is the
+signature of general relativity -- the perihelion advance Newton does
+not explain and this program computes -- so the mark states what the
+project is for rather than decorating it.
 
 **Tested through the real UI, not just the command handlers**
 (`oderom-app/src-tauri/tests/keymap.rs`): calling `execute_block`/
