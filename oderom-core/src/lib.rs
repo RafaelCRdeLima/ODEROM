@@ -7,6 +7,7 @@
 //! slot contractions.
 
 pub mod cancel;
+pub mod clock;
 pub mod error;
 pub mod head;
 pub mod monomial;

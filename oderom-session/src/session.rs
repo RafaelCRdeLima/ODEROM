@@ -150,7 +150,7 @@ impl Session {
     /// name `Stale` (section 3) -- computed here, against the outgoing
     /// `Document`, before it's dropped.
     pub fn evaluate_definitions(&mut self, source: String) -> Result<EvalSummary, CliError> {
-        let start = std::time::Instant::now();
+        let start = oderom_core::clock::Instant::now();
         let generation = Generation(self.next_generation);
         let new_document = Document::parse(&source, generation)?;
 

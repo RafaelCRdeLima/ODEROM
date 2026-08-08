@@ -3,17 +3,24 @@
 **Leia antes de editar qualquer arquivo deste diretório.**
 
 Os arquivos aqui (`index.html`, `notebook.js`, `notebook.css`,
-`oderom-mode.js`, `vendor/`) servem a **dois** hospedeiros:
+`oderom-mode.js`, `backend.js`, `vendor/`) servem a **dois** hospedeiros:
 
 1. **O app de desktop** (`oderom-app/src-tauri`), onde um webview do Tauri
    carrega esta pasta e o Rust responde por `#[tauri::command]`.
-2. **A versão web** (WebAssembly, publicada no GitHub Pages), onde o mesmo
-   HTML roda no navegador do aluno e o Rust responde compilado para wasm.
+2. **A versão web** (crate `oderom-wasm`, publicada no GitHub Pages por
+   `.github/workflows/web.yml`), onde o mesmo HTML roda no navegador do
+   aluno e o Rust responde compilado para wasm.
 
-A decisão de manter **uma** cópia, em vez de bifurcar em `oderom-web/`, foi
+Para montar a versão web localmente: `./oderom-wasm/construir.sh`, que
+escreve em `oderom-web/` (não versionado — é tudo derivado daqui e do
+crate). O teste `oderom-wasm/tests/navegador.rs` faz exatamente isso e
+depois abre o resultado num Chrome de verdade.
+
+A decisão de manter **uma** cópia, em vez de bifurcar o frontend em dois, foi
 deliberada: duas cópias divergem, e o custo aparece meses depois, quando uma
-correção de interface é feita em um lado e esquecida no outro. O preço dessa
-escolha é a regra abaixo.
+correção de interface é feita em um lado e esquecida no outro. Por isso
+`oderom-web/` é montado por script e não versionado — é build, não fonte. O
+preço dessa escolha é a regra abaixo.
 
 ## A regra
 
@@ -43,7 +50,12 @@ load_gallery   gallery_list    copy_to_clipboard   frontend_ready
 
 **Acrescentar um comando exige implementá-lo nos dois backends.** Se só um
 existir, o frontend compartilhado quebra no outro — e provavelmente não na
-sua máquina, e sim na do aluno.
+sua máquina, e sim na do aluno. O `backend.js` lança um erro nomeando o
+comando quando isso acontece, em vez de falhar em silêncio.
+
+Além desses catorze, o wasm expõe `notebook_text` e `load_notebook_text`, que
+o `notebook.js` **nunca** chama: são as metades em Rust de
+`save_notebook`/`open_notebook`, usadas só pelo `backend.js`. Ver adiante.
 
 ## Três comandos não são simétricos
 
@@ -52,24 +64,51 @@ hospedeiro, e é aqui que mora o risco:
 
 | comando | desktop | navegador |
 |---|---|---|
-| `execute_block` / `cancel_block` | thread + cancelação profunda por unwind | Web Worker; cancelar = encerrar o worker |
-| `open_notebook` / `save_notebook` | diálogo do sistema, caminho de arquivo | seletor do navegador e download |
-| `copy_to_clipboard` | `arboard` (área de transferência do SO) | `navigator.clipboard` |
+| `execute_block` / `cancel_block` | thread + cancelação profunda por unwind | roda síncrono; `cancel_block` não faz nada |
+| `open_notebook` / `save_notebook` | diálogo do sistema, caminho de arquivo | seletor do navegador e download (`backend.js`) |
+| `copy_to_clipboard` | `arboard` (área de transferência do SO) | `navigator.clipboard` (`backend.js`) |
+
+Os dois últimos são traduzidos no `backend.js`, sobre duas funções que só
+existem no wasm (`notebook_text`, `load_notebook_text`): o Rust faz a metade
+que é dele, o navegador faz a dele, e o `notebook.js` continua chamando
+`save_notebook`/`open_notebook` sem saber de nada disso.
 
 Sobre o cancelamento: `wasm32` é `panic = "abort"` por construção, então o
-`catch_unwind` de `oderom-expr::cancel` não funciona lá. Veja o comentário
-em `oderom-expr/src/cancel.rs` — a cancelação profunda é compilada fora no
-alvo wasm de propósito, e quem cancela é o JavaScript encerrando o worker.
+`catch_unwind` de `oderom-expr::cancel` não funciona lá (veja o comentário em
+`oderom-expr/src/cancel.rs`, onde a cancelação profunda é compilada fora no
+alvo wasm de propósito). E a página tem uma thread só — a mesma que estaria
+processando o clique em "Cancelar". O `cancel_block` do wasm existe,
+responde, e não faz nada; o doc comment dele explica por quê.
 
-## Dívida conhecida: os DTOs ainda não são compartilhados
+## O próximo passo: Web Worker
+
+Enquanto uma conta roda, a aba fica parada — é a consequência direta de
+haver uma thread só. Mover o `oderom-wasm` para dentro de um Web Worker
+resolve as duas coisas de uma vez: a página segue respondendo, e cancelar
+passa a ser possível (o JavaScript encerra o worker de fora).
+
+Não foi feito junto com a estreia do backend porque worker é uma mudança de
+**transporte** — toda chamada vira mensagem assíncrona, o `backend.js` muda
+inteiro — e misturar as duas faria com que qualquer falha tivesse duas
+causas possíveis. O contrato dos comandos não muda, então é uma mudança
+local ao `backend.js` e ao `oderom-wasm`, sem tocar no `notebook.js`.
+
+## Os DTOs são compartilhados, e o compilador cobra isso
 
 Os tipos que atravessam a fronteira (`BlockDto`, `NotebookDto`,
-`ComponentDto`, `EntryDto`, `GalleryEntryDto`, ~145 linhas) estão definidos
-**dentro** de `oderom-app/src-tauri/src/lib.rs`. O backend wasm precisa
-produzir exatamente o mesmo JSON, e hoje isso é garantido por disciplina, não
-pelo compilador.
+`ComponentDto`, `EntryDto`, `GalleryEntryDto`, `ExecuteOutcomeDto`) e suas
+funções de conversão moram no crate **`oderom-ui`**, do qual os dois
+backends dependem. Há uma definição só: mudar um campo quebra o build dos
+dois lados na mesma hora, em vez de a versão web silenciosamente produzir um
+JSON que o frontend não entende — na máquina do aluno, meses depois.
 
-Enquanto essa dívida existir, **mudar um DTO é mudar um contrato**: altere-o
-nos dois lados na mesma mudança. O passo que fecha esse buraco é extrair os
-DTOs e suas funções de conversão para um crate próprio, do qual os dois
-backends dependam — aí o compilador passa a cobrar o que hoje é lembrança.
+`oderom-ui` também monta as duas respostas inteiras que mais teriam a perder
+com uma divergência: `notebook_dto()` (o `list_blocks`, chamado depois de
+*toda* mudança de estado) e `gallery_entries()`. Os backends só as repassam.
+
+O que o `oderom-ui` deliberadamente **não** contém é o despacho dos
+comandos: `execute_block` numa thread aqui e síncrono lá, diálogo do
+sistema contra seletor do navegador. Essas diferenças são reais, e forçá-las
+numa abstração comum trocaria uma duplicação honesta por uma indireção que
+mente. O que é obrigatoriamente igual — a *forma* dos dados — é o que está
+compartilhado.

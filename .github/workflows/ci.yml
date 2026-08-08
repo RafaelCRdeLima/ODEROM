@@ -39,7 +39,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - run: sudo apt-get update && sudo apt-get install -y $TAURI_APT_DEPS
+      # Sem isto, `oderom-wasm/tests/navegador.rs` se declara pulado (o
+      # `construir.sh` não acha o CLI) e a versão web fica sem cobertura
+      # nenhuma no CI -- que é exatamente onde ela mais precisa, já que é
+      # o único lugar que testa o que vai ser publicado. O Chrome que o
+      # teste usa já vem no runner ubuntu-latest.
+      - name: instalar o wasm-bindgen CLI (para o teste de navegador)
+        run: |
+          versao=$(grep -oP 'wasm-bindgen = "=\K[0-9.]+' oderom-wasm/Cargo.toml)
+          cargo install -f wasm-bindgen-cli --version "$versao"
       - run: cargo test --workspace
 
   test-release:
@@ -50,5 +61,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - run: sudo apt-get update && sudo apt-get install -y $TAURI_APT_DEPS
+      # Sem isto, `oderom-wasm/tests/navegador.rs` se declara pulado (o
+      # `construir.sh` não acha o CLI) e a versão web fica sem cobertura
+      # nenhuma no CI -- que é exatamente onde ela mais precisa, já que é
+      # o único lugar que testa o que vai ser publicado. O Chrome que o
+      # teste usa já vem no runner ubuntu-latest.
+      - name: instalar o wasm-bindgen CLI (para o teste de navegador)
+        run: |
+          versao=$(grep -oP 'wasm-bindgen = "=\K[0-9.]+' oderom-wasm/Cargo.toml)
+          cargo install -f wasm-bindgen-cli --version "$versao"
       - run: cargo test --workspace --release

@@ -296,7 +296,7 @@ impl Add for BigScalar {
     type Output = BigScalar;
     fn add(self, rhs: BigScalar) -> BigScalar {
         if stats_enabled() {
-            let t0 = std::time::Instant::now();
+            let t0 = oderom_core::clock::Instant::now();
             let result = add_impl(self, rhs);
             ARITH_COUNT.with(|c| c.set(c.get() + 1));
             ARITH_NANOS.with(|n| n.set(n.get() + t0.elapsed().as_nanos() as u64));
@@ -340,7 +340,7 @@ impl Mul for BigScalar {
     type Output = BigScalar;
     fn mul(self, rhs: BigScalar) -> BigScalar {
         if stats_enabled() {
-            let t0 = std::time::Instant::now();
+            let t0 = oderom_core::clock::Instant::now();
             let result = mul_impl(self, rhs);
             ARITH_COUNT.with(|c| c.set(c.get() + 1));
             ARITH_NANOS.with(|n| n.set(n.get() + t0.elapsed().as_nanos() as u64));

@@ -39,7 +39,6 @@ use oderom_components::{
 };
 use oderom_core::{Render, Target, Variance};
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Instant;
 
 /// Same default as the CLI's own (`commands.rs`'s `DEFAULT_MAX_NODES`,
 /// kept private there) -- not shared as a `pub const` yet because
@@ -84,7 +83,7 @@ fn run_query_inner(
     query: &Query,
     ctx: &ExecutionContext,
 ) -> Result<(EntryResult, BTreeSet<String>), CliError> {
-    let start = Instant::now();
+    let start = oderom_core::clock::Instant::now();
 
     // `export`'s own one-shot text result (Rodada Exportação) bypasses
     // the Latex+Unicode dual-render below entirely -- see

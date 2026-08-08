@@ -1,14 +1,26 @@
 //! ODEROM notebook shell -- Etapa 3a-2 (DESIGN-NOTEBOOK.md). All
 //! geometry/algebra/rendering-format decisions happen in
 //! `oderom-notebook`/`oderom-session`/`oderom-cli`; this crate only
-//! translates that state into JSON DTOs the static frontend
-//! (`dist/notebook.js`) can render, and translates button clicks back
+//! translates that state into the JSON DTOs the static frontend
+//! (`dist/notebook.js`) renders, and translates button clicks back
 //! into `oderom_notebook::Notebook` method calls. No parsing, no
 //! `Target::Latex` line-splitting decision beyond "does this line
 //! contain a backslash" (`dist/notebook.js`'s own doc comment explains
 //! why that specific, narrow judgment call lives in JS and not Rust).
+//!
+//! The DTOs themselves live in `oderom-ui`, not here: `dist/` is served
+//! to two backends -- this one and `oderom-wasm`, which runs the same
+//! page in a browser -- and both must emit byte-identical JSON. One
+//! definition, shared, is what makes that a compiler check instead of a
+//! thing to remember. See `dist/LEIA-ME.md`.
 
-use oderom_notebook::{BeginExecution, Block, BlockId, BlockOutput, DeclarationStatus, EntryState, Notebook};
+use oderom_notebook::{BeginExecution, BlockId, Notebook};
+// A *forma* de tudo o que atravessa a fronteira mora no `oderom-ui`, e
+// nao aqui, porque o backend wasm (`oderom-wasm`) precisa produzir
+// exatamente o mesmo JSON que estes comandos -- com uma definicao so, o
+// compilador cobra o que antes dependia de lembrar. Ver o doc comment
+// daquele crate e `dist/LEIA-ME.md`.
+use oderom_ui::{ExecuteOutcomeDto, GalleryEntryDto, NotebookDto};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -66,197 +78,9 @@ struct AppState {
     clipboard: Mutex<arboard::Clipboard>,
 }
 
-/// What the frontend actually needs to draw one block: never the raw
-/// `oderom_notebook::Block`/`BlockOutput` types (those aren't `Serialize`,
-/// deliberately -- their shape is this crate's own to define, not
-/// `oderom-notebook`'s public API surface). Etapa 3a-2 doesn't visually
-/// distinguish `confirmed`/`divergent` (that's Etapa 3b), but the DTO
-/// already carries the real status string either way, so 3b is a
-/// frontend-only change, not a new command.
-#[derive(serde::Serialize)]
-struct BlockDto {
-    id: u64,
-    source: String,
-    output: OutputDto,
-    /// Jupyter-style `In [n]` numbering -- `None` before this specific
-    /// block has itself ever been the direct target of an execute (see
-    /// `oderom_notebook::Block::execution_count`'s own doc comment for
-    /// why it's per-block-explicitly-run, not per-reconstruction-swept-in).
-    execution_count: Option<u64>,
-    /// Etapa 3b (DESIGN-NOTEBOOK.md section 9): `true` when this
-    /// block's displayed result no longer trustworthily reflects
-    /// what's live -- purely a fact to render (amber marker, never red:
-    /// this is not an error), never something this crate or the
-    /// frontend decides or acts on. Always `false` when
-    /// `execution_count` is `None`.
-    obsolete: bool,
-}
-
-/// Everything one `list_blocks` call needs to hand the frontend to
-/// redraw the whole notebook, including the header (current file name)
-/// -- a single round trip rather than a second command the frontend
-/// would have to remember to call in sync with the first.
-#[derive(serde::Serialize)]
-struct NotebookDto {
-    blocks: Vec<BlockDto>,
-    current_path: Option<String>,
-}
-
-/// One clickable, copyable piece of a result -- mirrors
-/// `oderom_components::RenderedComponent` field for field. `latex` here
-/// is deliberately the exact same clean "name = value" string a
-/// component click should place on the clipboard: the frontend never
-/// reassembles or re-derives what to copy from anything else on screen,
-/// it just takes this field verbatim (`notebook.js`'s click handler).
-/// `orbit_note`, when present, is shown subordinated (smaller, beside
-/// or below `latex`) but is never part of what gets copied.
-#[derive(serde::Serialize, Clone)]
-struct ComponentDto {
-    latex: String,
-    orbit_note: Option<String>,
-}
-
-fn component_dto(c: &oderom_components::RenderedComponent) -> ComponentDto {
-    ComponentDto { latex: c.formula.clone(), orbit_note: c.orbit_note.clone() }
-}
-
-#[derive(serde::Serialize)]
-#[serde(tag = "kind")]
-enum OutputDto {
-    NeverRun,
-    Declaration { status: String, message: Option<String> },
-    Query {
-        state: String,
-        latex: Option<String>,
-        /// Same result as `latex`, split per component -- see
-        /// `ComponentDto`. Empty when `state` isn't `"done"`/`"stale"`
-        /// (nothing to show yet), same as `latex` being `None` then.
-        components: Vec<ComponentDto>,
-        /// Plain-English lines belonging to the whole result, not any
-        /// one component (truncation count, identically-zero count) --
-        /// rendered as plain text, never through KaTeX, never
-        /// copyable by a component click.
-        summary: Vec<String>,
-        message: Option<String>,
-    },
-    /// Etapa 3b (cancelamento, DESIGN-NOTEBOOK.md): the block's most
-    /// recent execution attempt is running or ended in cancellation --
-    /// `state` is `"running"` or `"cancelled"`. `previous`, if present,
-    /// is an *earlier* settled result (never itself running/cancelled)
-    /// to render alongside -- always obsolete when shown this way,
-    /// unconditionally: any `previous` present here is, by
-    /// construction, superseded by a newer attempt, whatever
-    /// `BlockDto::obsolete` (a separate, position/self-edit-based
-    /// signal) happens to say.
-    Attempt { state: String, previous: Option<PreviousResultDto> },
-    Unrecognized { message: String },
-}
-
-#[derive(serde::Serialize)]
-struct PreviousResultDto {
-    state: String,
-    latex: Option<String>,
-    components: Vec<ComponentDto>,
-    summary: Vec<String>,
-    message: Option<String>,
-}
-
-/// One `EntryState` as a DTO -- shared by `Query`'s own state and
-/// `Attempt`'s `previous` so the two can never quietly disagree about
-/// the same vocabulary (`"done"`/`"stale"`/`"failed"`/...) or about
-/// which of `components`/`summary` gets populated together with
-/// `latex`.
-struct EntryDto {
-    state: &'static str,
-    latex: Option<String>,
-    components: Vec<ComponentDto>,
-    summary: Vec<String>,
-    message: Option<String>,
-}
-
-fn entry_state_dto(state: &EntryState) -> EntryDto {
-    let empty = || EntryDto { state: "", latex: None, components: Vec::new(), summary: Vec::new(), message: None };
-    match state {
-        EntryState::Pending => EntryDto { state: "pending", ..empty() },
-        EntryState::Running => EntryDto { state: "running", ..empty() },
-        EntryState::Done { result, .. } => EntryDto {
-            state: "done",
-            latex: Some(result.latex.clone()),
-            components: result.components.iter().map(component_dto).collect(),
-            summary: result.summary.clone(),
-            ..empty()
-        },
-        EntryState::Stale { result, .. } => EntryDto {
-            state: "stale",
-            latex: Some(result.latex.clone()),
-            components: result.components.iter().map(component_dto).collect(),
-            summary: result.summary.clone(),
-            ..empty()
-        },
-        EntryState::Cancelled => EntryDto { state: "cancelled", ..empty() },
-        EntryState::Failed { message, .. } => EntryDto { state: "failed", message: Some(message.clone()), ..empty() },
-    }
-}
-
-fn block_to_dto(block: &Block, notebook: &Notebook) -> BlockDto {
-    let output = match &block.output {
-        BlockOutput::NeverRun => OutputDto::NeverRun,
-        BlockOutput::Declaration(status) => {
-            let (status, message) = match status {
-                DeclarationStatus::Confirmed => ("confirmed", None),
-                DeclarationStatus::Divergent => ("divergent", None),
-                DeclarationStatus::Error(msg) => ("error", Some(msg.clone())),
-            };
-            OutputDto::Declaration { status: status.to_string(), message }
-        }
-        BlockOutput::Query(entry_id) => match notebook.session().entries().iter().find(|e| e.id == *entry_id) {
-            Some(entry) => {
-                let e = entry_state_dto(&entry.state);
-                OutputDto::Query { state: e.state.to_string(), latex: e.latex, components: e.components, summary: e.summary, message: e.message }
-            }
-            // Should not happen (a block only ever holds an EntryId
-            // this same Session created), but a DTO layer reports an
-            // honest "I don't know" rather than panicking on a display
-            // path.
-            None => OutputDto::Query {
-                state: "missing".to_string(),
-                latex: None,
-                components: Vec::new(),
-                summary: Vec::new(),
-                message: Some("no matching session entry".to_string()),
-            },
-        },
-        BlockOutput::Attempt { attempt, previous } => {
-            let state = match notebook.session().entries().iter().find(|e| e.id == *attempt).map(|e| &e.state) {
-                Some(EntryState::Cancelled) => "cancelled",
-                // Running is overwhelmingly the expected case; any
-                // other state here would mean `finish_query` landed
-                // without the block's own output being updated to
-                // match, which nothing in `oderom-notebook` does --
-                // "running" is the honest default, not a guess dressed
-                // up as one of the other named states.
-                _ => "running",
-            };
-            let previous = previous.and_then(|prev_id| {
-                notebook.session().entries().iter().find(|e| e.id == prev_id).map(|e| {
-                    let e = entry_state_dto(&e.state);
-                    PreviousResultDto { state: e.state.to_string(), latex: e.latex, components: e.components, summary: e.summary, message: e.message }
-                })
-            });
-            OutputDto::Attempt { state: state.to_string(), previous }
-        }
-        BlockOutput::Unrecognized(message) => OutputDto::Unrecognized { message: message.clone() },
-    };
-    BlockDto { id: block.id.0, source: block.source.clone(), output, execution_count: block.execution_count, obsolete: block.is_obsolete() }
-}
-
 #[tauri::command]
 fn list_blocks(state: State<AppState>) -> NotebookDto {
-    let notebook = state.notebook.lock().unwrap();
-    NotebookDto {
-        blocks: notebook.blocks().iter().map(|b| block_to_dto(b, &notebook)).collect(),
-        current_path: notebook.current_path().map(|p| p.display().to_string()),
-    }
+    oderom_ui::notebook_dto(&state.notebook.lock().unwrap())
 }
 
 #[tauri::command]
@@ -270,19 +94,6 @@ fn edit_block(state: State<AppState>, id: u64, source: String) {
     state.notebook.lock().unwrap().edit_block(BlockId(id), source);
 }
 
-/// Etapa 3b, segunda parte (exclusão mútua, DESIGN-NOTEBOOK.md section
-/// 10.8): what `execute_block` actually did, so the frontend can tell a
-/// real start apart from a refusal instead of both looking like silent
-/// success. `Blocked` carries the id of the block that is actually
-/// running, so the status bar can name it (never a modal -- the user's
-/// own requirement) rather than just saying "no").
-#[derive(serde::Serialize)]
-#[serde(tag = "kind")]
-enum ExecuteOutcomeDto {
-    Ok,
-    Blocked { by: u64 },
-    NotFound,
-}
 
 /// Etapa 3b (cancelamento, DESIGN-NOTEBOOK.md): returns as soon as a
 /// query's computation has been handed off to its own thread -- never
@@ -369,28 +180,12 @@ fn read_clipboard_for_test(state: State<AppState>) -> Result<String, String> {
     state.clipboard.lock().unwrap().get_text().map_err(|e| e.to_string())
 }
 
-/// One entry for the "Galeria" picker -- the frontend never sees
-/// [`oderom_notebook::gallery::GalleryEntry`] itself (that type is
-/// `&'static str` fields meant for Rust callers, not `Serialize`), just
-/// enough to fill a dropdown and show the two description lines
-/// (`oderom-notebook/src/gallery.rs`'s own `title`/`description`/
-/// `invariant` fields).
-#[derive(serde::Serialize)]
-struct GalleryEntryDto {
-    name: String,
-    title: String,
-    description: String,
-    invariant: String,
-}
 
 /// Every known gallery entry, in catalog order -- static data, so this
 /// never needs `AppState` at all.
 #[tauri::command]
 fn gallery_list() -> Vec<GalleryEntryDto> {
-    oderom_notebook::gallery::ENTRIES
-        .iter()
-        .map(|e| GalleryEntryDto { name: e.name.to_string(), title: e.title.to_string(), description: e.description.to_string(), invariant: e.invariant.to_string() })
-        .collect()
+    oderom_ui::gallery_entries()
 }
 
 /// `load NOME` (Rodada Galeria): pastes gallery entry `name`'s

@@ -768,7 +768,7 @@ fn gcd(a: UPoly, b: UPoly, table: &mut AtomTable) -> UPoly {
             );
         }
 
-        let __t_prem = std::time::Instant::now();
+        let __t_prem = oderom_core::clock::Instant::now();
         let (_, prem, _e) = r_prev
             .pseudo_div_rem(&r_cur, table)
             .expect("r_cur is nonzero (loop condition); pseudo_div_rem only returns None for a zero divisor");
@@ -785,7 +785,7 @@ fn gcd(a: UPoly, b: UPoly, table: &mut AtomTable) -> UPoly {
             return r_cur;
         }
 
-        let __t_div = std::time::Instant::now();
+        let __t_div = oderom_core::clock::Instant::now();
         let r_next = prem.exact_div_by_poly(&beta, table).unwrap_or_else(|| {
             panic!(
                 "subresultant PRS: remainder division by beta_i not exact -- an implementation assumption is violated, not something to fall back from (DESIGN-RATIONAL-FORM.md).\nbeta = {:#?}",

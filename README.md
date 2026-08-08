@@ -11,8 +11,29 @@ it. This file tracks what each marco actually delivered.
 
 ## Começando (uso, não desenvolvimento)
 
-Quem só quer **usar** o ODEROM para calcular curvatura não precisa de Rust
-nem compilar nada. Baixe o executável da sua plataforma em
+### No navegador, sem instalar nada
+
+**<https://rafaelcrdelima.github.io/ODEROM/>** abre o caderno do ODEROM
+dentro do navegador. Não há download, instalador, permissão de
+administrador nem dependência de sistema operacional — funciona igual num
+laboratório da universidade, num notebook emprestado e numa máquina onde
+não se pode instalar nada.
+
+O cálculo roda **na máquina de quem abriu**, compilado para WebAssembly
+(crate [`oderom-wasm`](oderom-wasm/)); nada é enviado para servidor
+nenhum. O caderno abre com Reissner–Nordström carregado e nada executado:
+Shift+Enter roda um bloco.
+
+Duas diferenças em relação ao aplicativo de desktop, ambas impostas pela
+plataforma e documentadas em
+[`oderom-app/dist/LEIA-ME.md`](oderom-app/dist/LEIA-ME.md): enquanto uma
+conta roda, a aba fica parada (a página tem uma thread só), e por isso
+"Cancelar" não tem efeito lá. Salvar baixa um arquivo `.oderom`, no mesmo
+formato que o aplicativo lê.
+
+### Na linha de comando
+
+Baixe o executável da sua plataforma em
 [Releases](https://github.com/RafaelCRdeLima/ODEROM/releases) e rode:
 
 ```

@@ -12,6 +12,8 @@ members = [
     "oderom-session",
     "oderom-repl",
     "oderom-notebook",
+    "oderom-ui",
+    "oderom-wasm",
     "oderom-app/src-tauri",
 ]
 

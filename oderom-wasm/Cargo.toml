@@ -1,0 +1,26 @@
+[package]
+name = "oderom-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "O ODEROM compilado para o navegador -- responde aos mesmos comandos que o app Tauri, sem instalar nada."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+oderom-core = { path = "../oderom-core" }
+oderom-notebook = { path = "../oderom-notebook" }
+oderom-ui = { path = "../oderom-ui" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Versao EXATA, e nao "0.2": o `wasm-bindgen` crate e o `wasm-bindgen`
+# CLI que processa o .wasm precisam ser da mesma versao, e quando nao
+# sao o erro aparece so no fim do build, com uma mensagem que nao diz
+# qual dos dois mudar. Fixar aqui transforma isso num fato verificavel
+# -- `construir.sh` compara os dois antes de compilar qualquer coisa.
+wasm-bindgen = "=0.2.100"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"

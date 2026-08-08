@@ -1,0 +1,80 @@
+name: Versão web
+
+# Publica o ODEROM como uma página no GitHub Pages: o aluno abre um
+# link e o programa roda dentro do navegador dele, sem instalar nada,
+# sem depender do sistema operacional que ele tem, e sem que nenhum
+# cálculo saia da máquina dele (o wasm roda na aba, não num servidor).
+#
+# É a forma de distribuição que importa para uma turma: o instalador de
+# desktop (release.yml) pressupõe permissão para instalar programas,
+# que num laboratório da universidade ou num notebook emprestado nem
+# sempre existe.
+
+on:
+  push:
+    branches: [main]
+  # Para republicar sem precisar de um commit -- por exemplo depois de
+  # mudar alguma configuração do Pages no próprio GitHub.
+  workflow_dispatch:
+
+# O que o `deploy-pages` exige para publicar. `contents: read` é o
+# mínimo para o checkout; nada aqui escreve no repositório.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Uma publicação por vez, e a mais nova ganha. `cancel-in-progress:
+# false` porque cancelar no meio de um deploy deixa o Pages num estado
+# em que a página publicada não corresponde a commit nenhum.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  construir:
+    name: construir a versão web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # A versão vem do Cargo.toml do próprio crate, e não escrita à mão
+      # aqui: o `construir.sh` aborta se o CLI não for exatamente a
+      # versão que o crate pede, então uma constante duplicada neste
+      # arquivo só serviria para quebrar o build no dia em que uma das
+      # duas cópias fosse atualizada e a outra não.
+      - name: instalar o wasm-bindgen CLI
+        run: |
+          versao=$(grep -oP 'wasm-bindgen = "=\K[0-9.]+' oderom-wasm/Cargo.toml)
+          echo "instalando wasm-bindgen-cli $versao"
+          cargo install -f wasm-bindgen-cli --version "$versao"
+
+      - name: construir
+        run: ./oderom-wasm/construir.sh "${{ github.workspace }}/site"
+
+      # Os testes de host do crate (`src/cmd.rs`) -- baratos, e cobrem o
+      # despacho e a serialização. O teste de navegador
+      # (`tests/navegador.rs`) roda no CI normal, não aqui: este job
+      # existe para publicar, e repetir a suíte inteira só atrasaria a
+      # publicação de um commit que o CI já está testando em paralelo.
+      - name: testes do backend web
+        run: cargo test -p oderom-wasm --lib
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publicar:
+    name: publicar no GitHub Pages
+    needs: construir
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
