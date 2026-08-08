@@ -8,7 +8,9 @@
 // (`RenderedComponent`'s own split, see `renderComponents`'s doc
 // comment) -- this file draws that pre-made split, it does not make it.
 
-const { invoke } = window.__TAURI__.core;
+// Fornecido por backend.js, que decide entre Tauri e wasm. Ver
+// LEIA-ME.md neste diretório antes de editar este arquivo.
+const invoke = window.ODEROM_invoke;
 
 // block id -> CodeMirror instance, so Shift+Enter/edits can read the
 // live editor content without a round trip through the DOM.
