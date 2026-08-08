@@ -49,6 +49,10 @@
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H4zm2 2v8h12V6zm-2 12h16v2H4zM7 8l3 3 2-2 4 4H7z"/></svg>
       Galeria
     </button>
+    <button id="export-btn" title="Exportar um resultado como codigo SymPy ou Mathematica">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 8L5 12l4 4m6-8l4 4-4 4M13 5l-2 14"/></svg>
+      Exportar
+    </button>
     <span id="app-actions-divider" aria-hidden="true"></span>
     <button id="clear-execution-btn" title="Limpar execução: volta todos os blocos a não-executados, sem tocar no texto">
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
@@ -89,6 +93,38 @@
     <button id="gallery-close-btn" title="Fechar" aria-label="Fechar">&times;</button>
   </div>
   <ul id="gallery-list"></ul>
+</div>
+<!--
+  O seletor "Exportar": mesmo padrao do #gallery-panel acima (painel
+  simples, escondido por padrao, sem backdrop, fecha por Escape/clique
+  fora/botao proprio).
+
+  Existe porque `export sympy kretschmann` sempre funcionou e ninguem
+  tinha como descobrir: nada na tela dizia que a palavra `export`
+  existia, e o realce de sintaxe so a colore DEPOIS de digitada, o que
+  ajuda apenas quem ja sabe. Este painel nao calcula nada -- ele
+  escreve a linha num bloco novo e deixa o aluno rodar, para que o
+  proximo `export` ele saiba escrever sozinho. Uma UI que escondesse a
+  sintaxe ensinaria a clicar, nao a usar o programa.
+
+  Formatos e consultas vem do comando `export_options`, derivado das
+  listas do proprio parser -- nunca escritos aqui. Ver o doc comment de
+  `oderom_ui::export_options`.
+-->
+<div id="export-panel" hidden>
+  <div id="export-panel-header">
+    <span>Exportar como codigo</span>
+    <button id="export-close-btn" title="Fechar" aria-label="Fechar">&times;</button>
+  </div>
+  <p id="export-panel-note">
+    Escolha o formato e o que calcular. Um bloco novo e criado com o
+    comando pronto &mdash; rode com Shift+Enter.
+  </p>
+  <div id="export-targets" role="group" aria-label="Formato de saida"></div>
+  <ul id="export-queries"></ul>
+  <p id="export-panel-hint">
+    Tambem da para digitar direto num bloco: <code>export sympy kretschmann</code>
+  </p>
 </div>
 <main id="blocks"></main>
 <footer id="status-bar">

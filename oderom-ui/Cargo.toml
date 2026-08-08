@@ -6,6 +6,9 @@ license.workspace = true
 description = "O contrato JSON entre o Rust e o frontend -- compartilhado pelo app Tauri e pela versao wasm."
 
 [dependencies]
+# Direto, e nao so via `oderom-notebook`: `export_options` le as
+# listas canonicas do parser (`CommandName`, `export_target_keywords`).
+oderom-cli = { path = "../oderom-cli" }
 oderom-notebook = { path = "../oderom-notebook" }
 oderom-components = { path = "../oderom-components" }
 serde = { version = "1.0", features = ["derive"] }

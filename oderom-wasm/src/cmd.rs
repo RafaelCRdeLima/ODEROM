@@ -214,6 +214,13 @@ pub fn gallery_list(a: &str) -> Result<String, String> {
     json(&oderom_ui::gallery_entries())
 }
 
+/// O que o seletor "Exportar" pode oferecer -- como `gallery_list`,
+/// dado estático, derivado da própria gramática.
+pub fn export_options(a: &str) -> Result<String, String> {
+    let _: SemArgs = args(a)?;
+    json(&oderom_ui::export_options())
+}
+
 pub fn load_gallery(a: &str) -> Result<String, String> {
     let a: LoadGalleryArgs = args(a)?;
     let ids = NOTEBOOK.with(|n| {

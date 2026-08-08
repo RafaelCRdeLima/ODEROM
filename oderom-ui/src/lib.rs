@@ -252,6 +252,59 @@ pub struct GalleryEntryDto {
     pub invariant: String,
 }
 
+/// Um formato para o qual o `export` sabe traduzir.
+#[derive(serde::Serialize)]
+pub struct ExportTargetDto {
+    /// A palavra que vai no bloco: `"sympy"`, `"mathematica"`.
+    pub keyword: String,
+}
+
+/// Uma consulta que pode ser exportada, e o que ela exige para ser uma
+/// linha completa.
+#[derive(serde::Serialize)]
+pub struct ExportQueryDto {
+    pub keyword: String,
+    /// `geodesic`/`accel` precisam de um nome de parâmetro afim depois
+    /// da palavra (`geodesic tau`); as demais não. Vem do parser
+    /// (`CommandName::needs_affine_parameter`), nunca de uma lista
+    /// mantida à mão do lado do frontend.
+    pub needs_param: bool,
+}
+
+/// O que o seletor "Exportar" oferece: os formatos e as consultas que
+/// `export` aceita, direto das listas do parser.
+#[derive(serde::Serialize)]
+pub struct ExportOptionsDto {
+    pub targets: Vec<ExportTargetDto>,
+    pub queries: Vec<ExportQueryDto>,
+}
+
+/// Tudo o que o seletor "Exportar" precisa, derivado do parser.
+///
+/// Existe porque a exportação para SymPy/Mathematica funcionava mas
+/// era invisível: nada na interface dizia que `export sympy
+/// kretschmann` era possível, e quem não soubesse a sintaxe de cor não
+/// tinha como descobri-la. O seletor escreve a linha; esta função diz o
+/// que ele pode escrever.
+///
+/// As duas listas vêm de `oderom_cli::parser` e nunca de uma cópia:
+/// um alvo ou uma consulta acrescentados lá aparecem aqui na mesma
+/// compilação. A alternativa -- enumerá-las no JavaScript -- é
+/// exatamente o que já deixou o realce de sintaxe desta mesma página
+/// desatualizado duas vezes.
+pub fn export_options() -> ExportOptionsDto {
+    use oderom_cli::parser::{export_target_keywords, CommandName};
+    ExportOptionsDto {
+        targets: export_target_keywords().map(|keyword| ExportTargetDto { keyword: keyword.to_string() }).collect(),
+        queries: CommandName::keywords_with_command()
+            .map(|(keyword, command)| ExportQueryDto {
+                keyword: keyword.to_string(),
+                needs_param: command.needs_affine_parameter(),
+            })
+            .collect(),
+    }
+}
+
 /// Toda entrada conhecida da galeria, em ordem de catálogo -- dado
 /// estático, então isto não precisa de estado nenhum.
 pub fn gallery_entries() -> Vec<GalleryEntryDto> {

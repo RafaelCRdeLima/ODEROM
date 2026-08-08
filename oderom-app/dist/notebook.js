@@ -749,10 +749,117 @@ document.getElementById("gallery-btn").addEventListener("click", () => {
   if (panel.hidden) openGalleryPanel();
   else closeGalleryPanel();
 });
+
+// O seletor "Exportar" -- ver o comentário do #export-panel em
+// index.html para por que ele existe.
+//
+// Ele NÃO calcula nada: escreve `export FORMATO CONSULTA` num bloco
+// novo no fim do caderno e foca esse bloco, exatamente como se o aluno
+// tivesse digitado. Rodar continua sendo Shift+Enter, igual a qualquer
+// outro bloco -- um botão que também executasse seria o único lugar da
+// página onde clicar dispara conta, e a regra "nada recalcula sozinho"
+// vale aqui como vale em todo o resto.
+//
+// `export_options` é estático (vem da gramática, não do estado), então
+// é buscado uma vez e guardado, mesma razão de `galleryEntriesCache`.
+let exportOptionsCache = null;
+let exportTarget = null;
+
+async function openExportPanel() {
+  const panel = document.getElementById("export-panel");
+  if (!exportOptionsCache) {
+    exportOptionsCache = await invoke("export_options");
+    exportTarget = exportOptionsCache.targets[0]?.keyword ?? null;
+  }
+  renderExportPanel();
+  panel.hidden = false;
+}
+
+function renderExportPanel() {
+  const targets = document.getElementById("export-targets");
+  targets.innerHTML = "";
+  for (const t of exportOptionsCache.targets) {
+    const btn = document.createElement("button");
+    btn.className = "export-target" + (t.keyword === exportTarget ? " selected" : "");
+    btn.textContent = t.keyword;
+    // `aria-pressed` e não `role="radio"`: são botões de alternância
+    // num grupo, e o leitor de tela deve anunciar qual está ativo.
+    btn.setAttribute("aria-pressed", String(t.keyword === exportTarget));
+    btn.addEventListener("click", () => {
+      exportTarget = t.keyword;
+      renderExportPanel();
+    });
+    targets.appendChild(btn);
+  }
+
+  const list = document.getElementById("export-queries");
+  list.innerHTML = "";
+  for (const q of exportOptionsCache.queries) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "export-query";
+
+    const nome = document.createElement("span");
+    nome.className = "export-query-name";
+    nome.textContent = q.keyword;
+    btn.appendChild(nome);
+
+    // A linha exata que vai para o bloco, mostrada antes de clicar: o
+    // painel ensina a sintaxe em vez de escondê-la.
+    const linha = exportLine(q);
+    const previa = document.createElement("code");
+    previa.className = "export-query-preview";
+    previa.textContent = linha;
+    btn.appendChild(previa);
+
+    if (q.needs_param) {
+      // `geodesic`/`accel` exigem um nome de parâmetro afim, e o painel
+      // não tem como adivinhá-lo -- põe `tau` como exemplo e avisa que
+      // é para trocar, em vez de gerar uma linha que falharia.
+      const aviso = document.createElement("span");
+      aviso.className = "export-query-note";
+      aviso.textContent = "troque tau pelo seu parâmetro";
+      btn.appendChild(aviso);
+    }
+
+    btn.addEventListener("click", () => insertExportBlock(linha));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+// A linha de comando de uma consulta, no formato escolhido. `tau` é um
+// exemplo, não um padrão que valha: ver `needs_param` acima.
+function exportLine(q) {
+  return `export ${exportTarget} ${q.keyword}` + (q.needs_param ? " tau" : "");
+}
+
+function closeExportPanel() {
+  document.getElementById("export-panel").hidden = true;
+}
+
+async function insertExportBlock(source) {
+  closeExportPanel();
+  const { blocks } = await invoke("list_blocks");
+  // No fim do caderno, nunca no meio -- mesma escolha da galeria, e
+  // pelo mesmo motivo: acrescentar depois do último bloco não pode
+  // tocar em nada acima dele.
+  const after = blocks.length > 0 ? blocks[blocks.length - 1].id : undefined;
+  const id = await invoke("create_block", { after, source });
+  await refresh(id);
+}
+
+document.getElementById("export-btn").addEventListener("click", () => {
+  const panel = document.getElementById("export-panel");
+  if (panel.hidden) openExportPanel();
+  else closeExportPanel();
+});
+document.getElementById("export-close-btn").addEventListener("click", closeExportPanel);
 document.getElementById("gallery-close-btn").addEventListener("click", closeGalleryPanel);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!document.getElementById("gallery-panel").hidden) closeGalleryPanel();
+  if (!document.getElementById("export-panel").hidden) closeExportPanel();
   // Escape only ever CLOSES the confirmation, exactly like Cancelar --
   // it must never be a shortcut for confirming a destructive action.
   if (!document.getElementById("new-notebook-confirm-panel").hidden) closeNewNotebookConfirmPanel();
@@ -763,6 +870,9 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("click", (e) => {
   const panel = document.getElementById("gallery-panel");
   if (!panel.hidden && !panel.contains(e.target) && !e.target.closest("#gallery-btn")) closeGalleryPanel();
+
+  const exportPanel = document.getElementById("export-panel");
+  if (!exportPanel.hidden && !exportPanel.contains(e.target) && !e.target.closest("#export-btn")) closeExportPanel();
 
   // Same convention for the "Novo caderno" confirmation -- clicking
   // away CANCELS, same as Escape/Cancelar, never confirms.

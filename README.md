@@ -24,6 +24,12 @@ O cálculo roda **na máquina de quem abriu**, compilado para WebAssembly
 nenhum. O caderno abre com Reissner–Nordström carregado e nada executado:
 Shift+Enter roda um bloco.
 
+O botão **Exportar** escreve o resultado como código para colar noutro
+programa — `export sympy kretschmann`, `export mathematica riemann g`,
+`export sympy geodesic tau`. Vale para qualquer consulta, e o painel
+mostra a linha antes de inserir, para que da segunda vez você já saiba
+escrevê-la. Na linha de comando é `oderom export sympy kretschmann FILE`.
+
 Duas diferenças em relação ao aplicativo de desktop, ambas impostas pela
 plataforma e documentadas em
 [`oderom-app/dist/LEIA-ME.md`](oderom-app/dist/LEIA-ME.md): enquanto uma

@@ -215,10 +215,13 @@ impl Session {
     }
 
     fn run_query_as_state(&mut self, input: &str, ctx: &ExecutionContext) -> EntryState {
-        let Some(document) = &self.document else {
-            return EntryState::Failed { message: "no definitions evaluated yet".to_string(), line: None, column: None };
+        // Parse BEFORE checking for a document -- see `no_document_state`.
+        let query = match parse_query(input) {
+            Ok(query) => query,
+            Err(e) => return error_state(e),
         };
-        outcome_to_state(document.generation, parse_query(input).and_then(|query| run_query(document, &mut self.cache, &query, ctx)))
+        let Some(document) = &self.document else { return no_document_state() };
+        outcome_to_state(document.generation, run_query(document, &mut self.cache, &query, ctx))
     }
 
     /// The cancellable, off-thread half of running a query -- Etapa 3b
@@ -239,20 +242,18 @@ impl Session {
         let id = EntryId(self.next_entry_id);
         self.next_entry_id += 1;
 
-        let Some(document) = self.document.clone() else {
-            self.entries.push(Entry { id, input, state: EntryState::Failed { message: "no definitions evaluated yet".to_string(), line: None, column: None } });
-            return QueryStart::Failed(id);
-        };
+        // Parse BEFORE looking for a document, same order and same
+        // reason as `run_query_as_state` -- see `no_document_state`.
         let query = match parse_query(&input) {
-            Ok(q) => q,
-            Err(CliError::Parse { message, position }) => {
-                self.entries.push(Entry { id, input, state: EntryState::Failed { message, line: position.map(|p| p.line), column: position.map(|p| p.column) } });
-                return QueryStart::Failed(id);
-            }
+            Ok(query) => query,
             Err(e) => {
-                self.entries.push(Entry { id, input, state: EntryState::Failed { message: e.to_string(), line: None, column: None } });
+                self.entries.push(Entry { id, input, state: error_state(e) });
                 return QueryStart::Failed(id);
             }
+        };
+        let Some(document) = self.document.clone() else {
+            self.entries.push(Entry { id, input, state: no_document_state() });
+            return QueryStart::Failed(id);
         };
 
         let ctx = ExecutionContext::new();
@@ -283,6 +284,38 @@ impl Session {
 /// `run_query` outcome means as an `EntryState`, so the two can never
 /// quietly disagree (e.g. one recognizing a cancellation distinctly and
 /// the other still calling it a plain `Failed`).
+/// The query is well-formed but there is nothing declared to run it
+/// against yet.
+///
+/// Both callers reach this only AFTER `parse_query` has succeeded, and
+/// that order is the whole point. It used to be the other way round, so
+/// a query written before any declaration was evaluated reported this
+/// message no matter what was wrong with it -- someone who typed
+/// `export python kretschmann` (the target is `sympy`, there is no
+/// `python`) was told about declarations instead of about `python`, and
+/// the message that would have fixed it only appeared once the
+/// declarations happened to be run. A notebook's first block is exactly
+/// where a typo is most likely and this state most likely, so the two
+/// coincided precisely where the wrong answer hurt most.
+///
+/// Parsing is pure -- it reads the input string and nothing else -- so
+/// doing it first costs nothing and can never depend on the document
+/// that may not exist yet.
+fn no_document_state() -> EntryState {
+    EntryState::Failed { message: "no definitions evaluated yet".to_string(), line: None, column: None }
+}
+
+/// One `CliError` -> `EntryState::Failed`, keeping a parse error's
+/// line/column (which is what puts the caret on the offending word).
+fn error_state(e: CliError) -> EntryState {
+    match e {
+        CliError::Parse { message, position } => {
+            EntryState::Failed { message, line: position.map(|p| p.line), column: position.map(|p| p.column) }
+        }
+        e => EntryState::Failed { message: e.to_string(), line: None, column: None },
+    }
+}
+
 fn outcome_to_state(as_of: Generation, outcome: Result<(EntryResult, BTreeSet<String>), CliError>) -> EntryState {
     match outcome {
         Ok((result, used)) => EntryState::Done { result, used, as_of },
@@ -1025,6 +1058,32 @@ metric g on schw bundle TM {
         };
         let entry = session.entries().iter().find(|e| e.id == id).unwrap();
         assert!(matches!(&entry.state, EntryState::Failed { message, .. } if message.contains("no definitions")));
+    }
+
+    /// A malformed query written before anything is declared reports
+    /// what is wrong with the QUERY, not the missing declarations.
+    ///
+    /// The two conditions coincide precisely where it matters most --
+    /// the first block of a fresh notebook is both the likeliest place
+    /// for a typo and the only place where nothing is declared yet --
+    /// and reporting the wrong one there sends the reader to fix
+    /// something that is not broken. See `no_document_state`.
+    #[test]
+    fn a_malformed_query_reports_its_own_error_even_with_nothing_declared() {
+        for (input, esperado) in [
+            ("export python kretschmann", "python"),
+            ("export sympy", "needs a query"),
+            ("naoexisteessecomando", "unknown command"),
+        ] {
+            let mut session = Session::new();
+            let QueryStart::Failed(id) = session.begin_query(input.to_string()) else {
+                panic!("expected QueryStart::Failed for {input:?}");
+            };
+            let entry = session.entries().iter().find(|e| e.id == id).unwrap();
+            let EntryState::Failed { message, .. } = &entry.state else { panic!("expected Failed for {input:?}") };
+            assert!(message.contains(esperado), "{input:?} deveria falar de {esperado:?}, mas disse: {message}");
+            assert!(!message.contains("no definitions"), "{input:?} nao deveria culpar as declaracoes: {message}");
+        }
     }
 
     #[test]

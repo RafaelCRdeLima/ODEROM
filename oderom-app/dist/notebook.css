@@ -327,6 +327,143 @@ body {
 }
 
 /* ---------------------------------------------------------------- */
+/* Export picker -- same plain-panel treatment as the gallery above:   */
+/* no backdrop, no focus trap, closes via its own button or Escape.    */
+/* ---------------------------------------------------------------- */
+
+#export-panel {
+  position: absolute;
+  top: 3.4rem;
+  right: 1rem;
+  z-index: 10;
+  width: 26rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+#export-panel[hidden] {
+  display: none;
+}
+
+#export-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+#export-close-btn {
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+#export-panel-note,
+#export-panel-hint {
+  margin: 0;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+#export-panel-hint {
+  border-top: 1px solid var(--border);
+}
+
+#export-panel-hint code {
+  font-size: 0.76rem;
+}
+
+#export-targets {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0 0.9rem 0.6rem;
+}
+
+.export-target {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.export-target:hover,
+.export-target:focus-visible {
+  background: var(--bg);
+}
+
+/* The chosen format, marked by fill and weight rather than color
+   alone -- the two options differ by one word, and a reader who does
+   not perceive the tint still needs to see which one is armed. */
+.export-target.selected {
+  background: var(--bg);
+  border-color: var(--ink-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+#export-queries {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem;
+  border-top: 1px solid var(--border);
+}
+
+.export-query {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.export-query:hover,
+.export-query:focus-visible {
+  background: var(--bg);
+}
+
+.export-query-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.export-query-preview {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  margin-top: 0.1rem;
+}
+
+.export-query-note {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  margin-top: 0.05rem;
+}
+
+/* ---------------------------------------------------------------- */
 /* Blocks                                                             */
 /* ---------------------------------------------------------------- */
 

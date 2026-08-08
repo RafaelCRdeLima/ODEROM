@@ -147,6 +147,14 @@ window.addEventListener("unhandledrejection", e =>
     p("query.state=" + (q && q.output.state));
     p("latex=" + (q && q.output.latex));
 
+    // As opcoes do seletor "Exportar" vem da gramatica, nao de uma
+    // lista escrita no JS -- se `export_options` sumir ou vier vazio, o
+    // botao abre um painel sem nada dentro.
+    const eo = await inv("export_options");
+    p("alvos=" + eo.targets.map(t => t.keyword).sort().join(","));
+    p("consultas=" + eo.queries.length);
+    p("param=" + eo.queries.filter(q => q.needs_param).map(q => q.keyword).sort().join(","));
+
     // Galeria, ida-e-volta de arquivo, e os comandos de estado.
     const g = await inv("gallery_list");
     p("galeria=" + g.length);
@@ -169,6 +177,103 @@ window.addEventListener("unhandledrejection", e =>
   } catch (e) { p("ERRO: " + (e && (e.stack || e.message) || e)); }
 })();
 </script></body>"#;
+
+/// Dirige o seletor "Exportar" da página REAL com cliques sintéticos.
+///
+/// Anexado ao `index.html` de verdade (a mesma convenção do
+/// `keytest.html` do desktop: os scripts são os que o aluno carrega,
+/// não uma reimplementação), porque o que este teste precisa provar é
+/// que os `addEventListener` do `notebook.js` estão ligados aos ids do
+/// `index.html` -- e isso um teste sobre o backend nunca veria.
+///
+/// **Nunca espere um número de milissegundos aqui, espere a condição**
+/// (`ateQue`). A primeira versão deste driver dormia 1200 ms depois do
+/// clique e lia o texto do bloco: passava sozinha e falhava dentro de
+/// `cargo test --workspace`, onde a CPU está ocupada com o resto da
+/// suíte e o CodeMirror demora mais para pintar. Um `sleep` calibrado
+/// na máquina de quem escreveu é um teste que reprova por carga, não
+/// por defeito -- e um teste que reprova à toa é um teste que as
+/// pessoas aprendem a ignorar.
+const DRIVER_UI: &str = r#"
+<script>
+window.__r = [];
+const p = m => window.__r.push(m);
+window.onerror = (m, s, l) => p("ERRO: " + m + " @" + s + ":" + l);
+window.addEventListener("unhandledrejection", e =>
+  p("ERRO: " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+const esperar = ms => new Promise(r => setTimeout(r, ms));
+// Espera a CONDICAO, nao um numero de milissegundos. Um `sleep`
+// calibrado passa na maquina de quem o escreveu e falha na suite
+// inteira, quando a CPU esta ocupada com o resto dos testes -- foi
+// exatamente assim que este arquivo falhou da primeira vez, esperando
+// o CodeMirror pintar o texto de um bloco recem-criado.
+async function ateQue(nome, cond, limite = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < limite) {
+    if (cond()) return true;
+    await esperar(50);
+  }
+  p("ERRO: tempo esgotado esperando " + nome);
+  return false;
+}
+window.addEventListener("load", async () => {
+  try {
+    await ateQue("o caderno desenhar", () => document.querySelectorAll(".block-editor").length > 0);
+    document.getElementById("export-btn").click();
+    await ateQue("o painel abrir", () => document.querySelectorAll(".export-query").length > 0);
+    p("aberto=" + !document.getElementById("export-panel").hidden);
+    const previas = () => [...document.querySelectorAll(".export-query-preview")].map(c => c.textContent);
+    p("alvos=" + [...document.querySelectorAll(".export-target")].map(b => b.textContent).sort().join(","));
+    p("consultas=" + previas().length);
+    p("geodesic=" + previas().find(c => c.includes("geodesic")));
+    // Trocar o formato reescreve TODAS as previas, nao so a primeira.
+    const sympy = [...document.querySelectorAll(".export-target")].find(b => b.textContent === "sympy");
+    sympy.click();
+    await ateQue("as previas virarem sympy", () => previas().every(c => c.startsWith("export sympy ")));
+    p("todas-sympy=" + previas().every(c => c.startsWith("export sympy ")));
+
+    // Clicar numa consulta insere o bloco e fecha o painel.
+    const antes = document.querySelectorAll(".block-editor").length;
+    [...document.querySelectorAll(".export-query")].find(b => b.textContent.includes("kretschmann")).click();
+    await ateQue("o painel fechar", () => document.getElementById("export-panel").hidden);
+    p("fechado=" + document.getElementById("export-panel").hidden);
+
+    // O RENDER primeiro, e so depois o backend -- nao por gosto, por
+    // ordem: `insertExportBlock` fecha o painel na primeira linha, antes
+    // de criar o bloco, entao "o painel fechou" nao significa que o
+    // bloco ja existe. Esperar o bloco aparecer na tela espera o
+    // `refresh()`, que so acontece depois do `create_block`.
+    await ateQue("o bloco novo aparecer na tela", () => {
+      const eds = document.querySelectorAll(".block-editor");
+      return eds.length === antes + 1 && eds[eds.length - 1].innerText.includes("export sympy kretschmann");
+    });
+    const eds = [...document.querySelectorAll(".block-editor")];
+    p("ultimo-tem-comando=" + eds[eds.length - 1].innerText.includes("export sympy kretschmann"));
+
+    // Agora o fato, direto do backend: o texto exato do bloco, e que
+    // ele nao foi executado.
+    const blocos = await window.ODEROM_invoke("list_blocks");
+    const ultimo = blocos.blocks[blocos.blocks.length - 1];
+    p("n-blocos=" + blocos.blocks.length);
+    p("ultimo-source=" + JSON.stringify(ultimo.source));
+    p("ultimo-nunca-rodou=" + (ultimo.output.kind === "NeverRun"));
+
+    // Escape fecha sem inserir nada.
+    document.getElementById("export-btn").click();
+    await ateQue("o painel reabrir", () => !document.getElementById("export-panel").hidden);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await ateQue("o painel fechar com Escape", () => document.getElementById("export-panel").hidden);
+    p("escape-fecha=" + document.getElementById("export-panel").hidden);
+    p("escape-nao-inseriu=" + (document.querySelectorAll(".block-editor").length === antes + 1));
+    p("FIM");
+  } catch (e) { p("ERRO: " + (e && (e.stack || e.message) || e)); }
+  const pre = document.createElement("pre");
+  pre.id = "__res";
+  pre.textContent = window.__r.join("\n");
+  document.body.appendChild(pre);
+});
+</script>
+"#;
 
 /// Carrega uma página no Chrome headless e devolve o DOM final.
 ///
@@ -229,6 +334,13 @@ fn a_versao_web_roda_de_verdade_num_navegador() {
     // ponte. O `class="block"` so aparece se o `refresh()` inicial
     // conseguiu falar com o wasm e desenhar.
     let real = carregar(&chrome, &format!("http://127.0.0.1:{porta}/index.html"));
+
+    // A mesma pagina real, com o driver de cliques anexado.
+    let indice = std::fs::read_to_string(dir.join("index.html")).unwrap();
+    std::fs::write(dir.join("driver-ui.html"), indice.replace("</body>", &format!("{DRIVER_UI}</body>"))).unwrap();
+    let ui = carregar(&chrome, &format!("http://127.0.0.1:{porta}/driver-ui.html"));
+    let ui = descodificar(&entre(&ui, "<pre id=\"__res\">", "</pre>").unwrap_or_default());
+
     parar.store(true, std::sync::atomic::Ordering::Relaxed);
 
     assert!(!relatorio.contains("ERRO:"), "o driver reportou erro:\n{relatorio}");
@@ -250,8 +362,34 @@ fn a_versao_web_roda_de_verdade_num_navegador() {
     assert!(relatorio.contains("reabriu="), "o ida-e-volta de arquivo falhou:\n{relatorio}");
     assert!(relatorio.contains("desconhecido-lanca=true"), "um comando so-do-Tauri deveria falhar alto:\n{relatorio}");
 
+    assert!(relatorio.contains("alvos=mathematica,sympy"), "os alvos do export vieram errados:\n{relatorio}");
+    assert!(relatorio.contains("consultas=12"), "o export deveria oferecer 12 consultas:\n{relatorio}");
+    // `geodesic`/`accel` sao as unicas que exigem parametro afim, e o
+    // seletor precisa saber disso para nao escrever uma linha invalida.
+    assert!(relatorio.contains("param=accel,geodesic"), "quem precisa de parametro mudou:\n{relatorio}");
+
     assert!(real.contains("class=\"block\""), "o index.html real nao desenhou bloco nenhum");
     assert!(real.contains("block-gutter"), "o index.html real nao desenhou os gutters");
+
+    // O seletor "Exportar" na pagina real, dirigido por cliques.
+    assert!(!ui.contains("ERRO:"), "o driver de UI reportou erro:\n{ui}");
+    assert!(ui.contains("FIM"), "o driver de UI nao chegou ao fim:\n{ui}");
+    assert!(ui.contains("aberto=true"), "o botao Exportar nao abriu o painel:\n{ui}");
+    assert!(ui.contains("alvos=mathematica,sympy"), "o painel listou outros formatos:\n{ui}");
+    assert!(ui.contains("consultas=12"), "o painel listou outro numero de consultas:\n{ui}");
+    assert!(ui.contains("geodesic=export mathematica geodesic tau"), "geodesic deveria vir com parametro:\n{ui}");
+    assert!(ui.contains("todas-sympy=true"), "trocar o formato deveria reescrever todas as previas:\n{ui}");
+    assert!(ui.contains("fechado=true"), "escolher uma consulta deveria fechar o painel:\n{ui}");
+    assert!(ui.contains("n-blocos=5"), "deveria ter inserido exatamente um bloco novo:\n{ui}");
+    assert!(ui.contains(r#"ultimo-source="export sympy kretschmann""#), "o bloco inserido tem outro texto:\n{ui}");
+    // O seletor escreve o bloco e para ai -- rodar continua sendo
+    // Shift+Enter, como em qualquer outro bloco. Um botao que tambem
+    // executasse seria o unico lugar da pagina onde clicar dispara
+    // conta, e "nada recalcula sozinho" vale aqui como no resto.
+    assert!(ui.contains("ultimo-nunca-rodou=true"), "o seletor nao deveria executar nada:\n{ui}");
+    assert!(ui.contains("ultimo-tem-comando=true"), "o bloco inserido nao apareceu na tela:\n{ui}");
+    assert!(ui.contains("escape-fecha=true"), "Escape deveria fechar o painel:\n{ui}");
+    assert!(ui.contains("escape-nao-inseriu=true"), "Escape nao deveria criar bloco nenhum:\n{ui}");
 }
 
 fn entre<'a>(texto: &'a str, abre: &str, fecha: &str) -> Option<&'a str> {

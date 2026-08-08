@@ -101,6 +101,7 @@ exportar!(
     clear_execution,
     new_notebook,
     gallery_list,
+    export_options,
     load_gallery,
     notebook_text,
     load_notebook_text,

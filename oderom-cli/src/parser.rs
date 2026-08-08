@@ -388,7 +388,34 @@ impl CommandName {
     /// itself) before this function existed to generate it from instead
     /// of hand-copying it.
     pub fn keywords() -> impl Iterator<Item = &'static str> {
-        COMMAND_KEYWORDS.iter().map(|(word, _)| *word)
+        Self::keywords_with_command().map(|(word, _)| word)
+    }
+
+    /// The same list as [`keywords`], paired with the command each word
+    /// names -- for callers that need to ask something about the
+    /// command itself, such as [`needs_affine_parameter`]. Exists so
+    /// they can do that without a second lookup table of their own.
+    ///
+    /// [`keywords`]: CommandName::keywords
+    /// [`needs_affine_parameter`]: CommandName::needs_affine_parameter
+    pub fn keywords_with_command() -> impl Iterator<Item = (&'static str, CommandName)> {
+        COMMAND_KEYWORDS.iter().copied()
+    }
+
+    /// Whether this command's grammar requires a trailing affine
+    /// parameter name (`geodesic tau`, `accel g tau`) -- every other
+    /// command takes at most an optional target.
+    ///
+    /// Canonical: `parse_query` branches on this to pick
+    /// `parse_geodesic_like_query_tail`, and the notebook's export
+    /// picker reads it to know that "geodesic" alone is not a runnable
+    /// line. A picker with its own hand-written list of which commands
+    /// need a parameter is exactly the kind of copy that has already
+    /// gone stale twice in this file's history (see [`keywords`]).
+    ///
+    /// [`keywords`]: CommandName::keywords
+    pub fn needs_affine_parameter(self) -> bool {
+        matches!(self, CommandName::Geodesic | CommandName::Accel)
     }
 }
 
@@ -496,7 +523,7 @@ fn parse_query_tokens(toks: &mut TokStream) -> Result<Query, CliError> {
         });
     };
 
-    if name == CommandName::Geodesic || name == CommandName::Accel {
+    if name.needs_affine_parameter() {
         return parse_geodesic_like_query_tail(toks, name);
     }
 

@@ -20,7 +20,7 @@ use oderom_notebook::{BeginExecution, BlockId, Notebook};
 // exatamente o mesmo JSON que estes comandos -- com uma definicao so, o
 // compilador cobra o que antes dependia de lembrar. Ver o doc comment
 // daquele crate e `dist/LEIA-ME.md`.
-use oderom_ui::{ExecuteOutcomeDto, GalleryEntryDto, NotebookDto};
+use oderom_ui::{ExecuteOutcomeDto, ExportOptionsDto, GalleryEntryDto, NotebookDto};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -188,6 +188,13 @@ fn gallery_list() -> Vec<GalleryEntryDto> {
     oderom_ui::gallery_entries()
 }
 
+/// What the "Exportar" picker can offer -- like `gallery_list`, static
+/// data derived from the grammar itself, so no `AppState` either.
+#[tauri::command]
+fn export_options() -> ExportOptionsDto {
+    oderom_ui::export_options()
+}
+
 /// `load NOME` (Rodada Galeria): pastes gallery entry `name`'s
 /// declaration text as new blocks right after `after` (or at the end,
 /// if `None`) -- [`oderom_notebook::Notebook::load_gallery_entry`]'s own
@@ -318,6 +325,7 @@ pub fn run() {
         clear_execution,
         new_notebook,
         gallery_list,
+        export_options,
         load_gallery,
         copy_to_clipboard,
         read_clipboard_for_test,

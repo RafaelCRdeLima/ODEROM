@@ -2577,6 +2577,7 @@ dependencies = [
 name = "oderom-ui"
 version = "0.1.0"
 dependencies = [
+ "oderom-cli",
  "oderom-components",
  "oderom-notebook",
  "serde",

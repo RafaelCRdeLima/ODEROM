@@ -39,13 +39,14 @@ notebook.js  ──chama──>  invoke()  ──despacha──>  Tauri  (deskto
                           └───────────────────>  wasm   (navegador)
 ```
 
-São **14 comandos** hoje:
+São **15 comandos** hoje:
 
 ```
 create_block   delete_block    edit_block      list_blocks
 execute_block  cancel_block    clear_execution
 new_notebook   open_notebook   save_notebook
-load_gallery   gallery_list    copy_to_clipboard   frontend_ready
+load_gallery   gallery_list    export_options
+copy_to_clipboard              frontend_ready
 ```
 
 **Acrescentar um comando exige implementá-lo nos dois backends.** Se só um
@@ -57,9 +58,23 @@ Além desses catorze, o wasm expõe `notebook_text` e `load_notebook_text`, que
 o `notebook.js` **nunca** chama: são as metades em Rust de
 `save_notebook`/`open_notebook`, usadas só pelo `backend.js`. Ver adiante.
 
+## `keytest.html` é uma cópia à mão deste markup
+
+O `index.html` e o `keytest.html` (ponto de entrada de `tests/keymap.rs`)
+carregam o **mesmo** `notebook.js`, então todo id que ele procura tem de
+existir nos dois. Acrescentar um elemento só ao `index.html` faz o
+`notebook.js` chamar `addEventListener` sobre `null` e derrubar a página
+inteira no teste — cujo sintoma é "o teste de teclado quebrou", que não
+aponta para a causa. Já aconteceu duas vezes.
+
+`oderom-app/src-tauri/tests/paginas_em_sincronia.rs` cobra isso agora:
+lê os ids que o `notebook.js` realmente procura e exige que as duas
+páginas os declarem, além de conferir que carregam os mesmos `<script>`
+na mesma ordem.
+
 ## Três comandos não são simétricos
 
-Onze dos catorze são tradução direta. Estes têm semântica diferente por
+Doze dos quinze são tradução direta. Estes têm semântica diferente por
 hospedeiro, e é aqui que mora o risco:
 
 | comando | desktop | navegador |
