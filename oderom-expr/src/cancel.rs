@@ -34,6 +34,9 @@
 
 use oderom_core::CancelToken;
 use std::cell::RefCell;
+// Só o caminho com unwind usa `panic`/`AssertUnwindSafe`; em wasm32 as
+// variantes abaixo não os tocam, e o crate compila com `warnings = deny`.
+#[cfg(not(target_arch = "wasm32"))]
 use std::panic::{self, AssertUnwindSafe};
 
 // `run_cancellable` below depends on `catch_unwind` actually catching --
@@ -45,7 +48,15 @@ use std::panic::{self, AssertUnwindSafe};
 // day someone presses Ctrl+C and the REPL (or any caller) dies instead
 // of cancelling. Caught at compile time instead of relying on anyone
 // remembering this file exists.
-#[cfg(panic = "abort")]
+//
+// A exceção é `wasm32`: aquele alvo é `panic = "abort"` por construção,
+// e não há como desligar isso. Lá a cancelação profunda simplesmente não
+// existe (ver `check_cancelled`/`run_cancellable` abaixo, na variante
+// `wasm32`), e o navegador cancela encerrando o Web Worker que hospeda o
+// módulo -- o que mata a computação de forma bem mais definitiva que um
+// unwind. Manter o `compile_error!` aqui tornaria o alvo inatingível
+// para proteger uma garantia que, lá, é dada por outro mecanismo.
+#[cfg(all(panic = "abort", not(target_arch = "wasm32")))]
 compile_error!(
     "oderom-expr's cancellation (see cancel.rs) requires catch_unwind, which does not catch under `panic = \"abort\"`. \
      Do not set `panic = \"abort\"` in any profile that builds this crate -- see the comment in the workspace Cargo.toml's [profile.release]."
@@ -95,6 +106,14 @@ impl Drop for CancellationScope {
 /// uncontended thread-local access plus one `Relaxed` atomic load,
 /// negligible next to a single polynomial multiplication, let alone a
 /// whole PRS iteration.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn check_cancelled() {
+    // Sem unwind neste alvo: um `panic_any` aqui abortaria o módulo
+    // inteiro em vez de voltar a `run_cancellable`, o que derrubaria a
+    // aba em vez de cancelar a consulta. Ver a nota na guarda acima.
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn check_cancelled() {
     let cancelled = CANCEL_TOKEN.with(|c| match c.borrow().as_ref() {
         Some(token) => token.is_cancelled(),
@@ -109,6 +128,17 @@ pub(crate) fn check_cancelled() {
 /// call below sees, converting a `Cancelled` unwind into `Err`. Any other
 /// panic (a genuine invariant violation -- see module docs) is resumed
 /// unchanged: this must never turn a real bug into a false "cancelled".
+#[cfg(target_arch = "wasm32")]
+pub fn run_cancellable<T>(token: CancelToken, f: impl FnOnce() -> T) -> Result<T, Cancelled> {
+    // O token continua armado -- quem o consultar diretamente (os
+    // checkpoints por componente em `oderom-components`) segue vendo o
+    // pedido de cancelamento. O que não existe aqui é a saída não-local
+    // de dentro de `normalize()`: ela dependia de unwind.
+    let _scope = CancellationScope::new(token);
+    Ok(f())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run_cancellable<T>(token: CancelToken, f: impl FnOnce() -> T) -> Result<T, Cancelled> {
     let _scope = CancellationScope::new(token);
     match panic::catch_unwind(AssertUnwindSafe(f)) {
@@ -123,6 +153,24 @@ pub fn run_cancellable<T>(token: CancelToken, f: impl FnOnce() -> T) -> Result<T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cancelação em wasm é dada por encerrar o Web Worker, não por
+    /// unwind -- e é por isso que `check_cancelled` é um no-op lá. Este
+    /// teste guarda a metade nativa da promessa: no alvo com unwind, a
+    /// cancelação profunda tem de continuar funcionando. Se alguém
+    /// generalizar o `#[cfg]` de wasm para todos os alvos "para
+    /// simplificar", isto falha imediatamente.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn deep_cancellation_still_unwinds_on_targets_that_have_unwinding() {
+        let token = CancelToken::new();
+        token.cancel();
+        let result = run_cancellable(token, || {
+            check_cancelled();
+            unreachable!("check_cancelled deveria ter desenrolado a pilha");
+        });
+        assert!(result.is_err(), "cancelação profunda deixou de funcionar");
+    }
 
     #[test]
     fn an_unarmed_scope_never_cancels() {
