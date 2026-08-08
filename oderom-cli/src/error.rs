@@ -69,13 +69,20 @@ pub enum CliError {
     #[error("`{command}` has {expected} index/indices, but the variance marker names {found} -- they must match exactly")]
     VarianceArityMismatch { command: String, expected: usize, found: usize },
 
-    #[error("expression exceeded {limit} nodes ({nodes}) at stage `{stage}`")]
+    /// O limite existe para falhar rápido em vez de consumir a máquina,
+    /// mas quem esbarra nele precisa saber que há saída: sem isso a
+    /// mensagem é um beco sem saída para quem não leu o manual. O
+    /// número reportado é um piso -- a consulta precisa de mais que
+    /// isso, não exatamente isso.
+    #[error("expression exceeded {limit} nodes ({nodes}) at stage `{stage}` -- raise the ceiling with `--max-nodes N`, using a value comfortably above {nodes}")]
     NodeLimitExceeded { stage: String, nodes: usize, limit: usize },
 
-    #[error("denominator degree exceeded {limit} ({degree}) at stage `{stage}`")]
+    /// Mesmo raciocínio de `NodeLimitExceeded`: dizer qual é a opção.
+    #[error("denominator degree exceeded {limit} ({degree}) at stage `{stage}` -- raise the ceiling with `--max-denominator-degree N`, using a value above {degree}")]
     DenominatorDegreeExceeded { stage: String, degree: i32, limit: i32 },
 
-    #[error("timed out after {timeout:?} -- last stage in progress: `{stage}`")]
+    /// Mesmo raciocínio de `NodeLimitExceeded`: dizer qual é a opção.
+    #[error("timed out after {timeout:?} -- last stage in progress: `{stage}` -- give it longer with `--timeout SECONDS`")]
     Timeout { stage: String, timeout: std::time::Duration },
 
     #[error(

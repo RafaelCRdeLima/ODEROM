@@ -9,6 +9,39 @@ Operational Differential Engine for Riemannian Object Manipulation. See
 (Marco 4) for the architecture and the representation decisions behind
 it. This file tracks what each marco actually delivered.
 
+## Começando (uso, não desenvolvimento)
+
+Quem só quer **usar** o ODEROM para calcular curvatura não precisa de Rust
+nem compilar nada. Baixe o executável da sua plataforma em
+[Releases](https://github.com/RafaelCRdeLima/ODEROM/releases) e rode:
+
+```
+oderom load schwarzschild > schwarzschild.od
+oderom kretschmann schwarzschild.od          # -> 48*M^2/r^6
+oderom scalar schwarzschild.od               # -> 0  (solução de vácuo)
+```
+
+No Linux e no macOS, `chmod +x` uma vez antes do primeiro uso. No Windows,
+o SmartScreen avisa que o autor é desconhecido — o binário não é assinado.
+
+Métricas já prontas na galeria: `schwarzschild`, `reissnernordstrom`, `frw`,
+`desitter`, `antidesitter`. `oderom load` com um nome desconhecido lista
+todas. Para uma métrica própria, escreva um arquivo `.od` como o de
+[`examples/kerr.od`](examples/kerr.od).
+
+Se uma consulta esbarrar em um limite, a mensagem de erro diz qual opção
+aumentar (`--max-nodes`, `--max-denominator-degree`, `--timeout`). Os
+limites existem para falhar em segundos em vez de consumir a máquina.
+
+O material didático está em [`docs/`](docs/): um manual do usuário e uma
+apostila de cálculo tensorial em Relatividade Geral, com todo exemplo
+computado pelo próprio ODEROM.
+
+**O caderno com interface gráfica ainda é compilado da fonte** — ele tem
+dependências de sistema por plataforma. Veja o capítulo de instalação do
+manual. Os binários publicados são só da linha de comando, que não tem
+nenhuma dependência fora do Rust.
+
 ## Layout
 
 ```

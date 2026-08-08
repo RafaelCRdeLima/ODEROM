@@ -1,0 +1,145 @@
+name: Release
+
+# Publica binários prontos para uso. O alvo é o aluno de um curso de
+# Relatividade Geral, que precisa calcular um tensor de curvatura e não
+# tem por que instalar um toolchain Rust para isso.
+#
+# Por que só a CLI, e não o caderno Tauri, nesta etapa: `oderom-cli`
+# depende exclusivamente de crates Rust (ver seu Cargo.toml -- thiserror,
+# smallvec e os crates do próprio workspace). Não há webkit2gtk, não há
+# WebView2, não há nada de C. Isso a torna compilável para as três
+# plataformas sem instalar dependência de sistema nenhuma, e o artefato
+# é um arquivo único que o aluno baixa e executa. O caderno tem
+# dependências de sistema em cada plataforma e entra depois, quando o
+# empacotamento estiver exercitado.
+#
+# Dispara em tag `v*` e também sob demanda (workflow_dispatch), para dar
+# para testar o pipeline inteiro antes de existir uma tag de verdade.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write        # necessário para criar a release e subir os anexos
+
+jobs:
+  build:
+    name: ${{ matrix.nome }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # Uma plataforma que falhe não deve impedir a publicação das
+      # outras: é melhor o aluno de Windows ter o binário enquanto o de
+      # macOS espera do que ninguém ter nada.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            nome: Linux (x86-64)
+            alvo: x86_64-unknown-linux-gnu
+            binario: oderom
+            artefato: oderom-linux-x86_64
+          - os: windows-latest
+            nome: Windows (x86-64)
+            alvo: x86_64-pc-windows-msvc
+            binario: oderom.exe
+            artefato: oderom-windows-x86_64.exe
+          - os: macos-latest
+            nome: macOS (Apple Silicon)
+            alvo: aarch64-apple-darwin
+            binario: oderom
+            artefato: oderom-macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.alvo }}
+
+      # Release, não debug: a aritmética deste workspace é cerca de 9x
+      # mais lenta em debug (DESIGN-RATIONAL-FORM.md), e o binário que o
+      # aluno recebe é o que ele vai usar para calcular Kerr.
+      # O pacote chama-se `oderom-cli`; o binário que ele produz chama-se
+      # `oderom` (ver o [[bin]] em oderom-cli/Cargo.toml). Os dois nomes
+      # não coincidem, e é por isso que `binario` existe na matriz.
+      - name: Compilar a CLI
+        run: cargo build --release --target ${{ matrix.alvo }} -p oderom-cli
+
+      # Um teste de fumaça que vale mais que "compilou": calcula o
+      # escalar de curvatura de Schwarzschild e confere que dá zero. Se
+      # o binário estiver quebrado de um jeito que a compilação não pega
+      # -- alvo errado, biblioteca faltando em tempo de execução -- é
+      # aqui que aparece, antes de chegar ao aluno.
+      - name: Teste de fumaça (Ricci de Schwarzschild = 0)
+        shell: bash
+        run: |
+          bin="target/${{ matrix.alvo }}/release/${{ matrix.binario }}"
+          "$bin" load schwarzschild > schwarzschild.od
+          saida=$("$bin" scalar schwarzschild.od | tail -1)
+          echo "escalar de Ricci: $saida"
+          test "$saida" = "0" || { echo "ERRO: esperava 0"; exit 1; }
+
+      - name: Nomear o artefato
+        shell: bash
+        run: cp "target/${{ matrix.alvo }}/release/${{ matrix.binario }}" "${{ matrix.artefato }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artefato }}
+          path: ${{ matrix.artefato }}
+          if-no-files-found: error
+
+  publicar:
+    name: Publicar a release
+    needs: build
+    runs-on: ubuntu-latest
+    # Só publica em tag. Um disparo manual serve para exercitar a
+    # compilação e o teste de fumaça nas três plataformas sem criar
+    # release nenhuma.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefatos
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artefatos/*
+          generate_release_notes: true
+          body: |
+            ## Como usar
+
+            Baixe o arquivo da sua plataforma, abaixo. É um executável
+            único: não instala nada, não precisa de Rust.
+
+            | sistema | arquivo |
+            |---|---|
+            | Windows | `oderom-windows-x86_64.exe` |
+            | Linux | `oderom-linux-x86_64` |
+            | macOS (Apple Silicon) | `oderom-macos-aarch64` |
+
+            No Linux e no macOS, dê permissão de execução uma vez:
+
+            ```
+            chmod +x oderom-linux-x86_64
+            ```
+
+            Depois, para calcular a curvatura de Schwarzschild:
+
+            ```
+            ./oderom-linux-x86_64 load schwarzschild > schwarzschild.od
+            ./oderom-linux-x86_64 kretschmann schwarzschild.od
+            ```
+
+            que deve responder `48*M^2/r^6`.
+
+            No Windows, o SmartScreen provavelmente vai avisar que o
+            programa é de autor desconhecido — o binário não é assinado.
+            É "Mais informações" e depois "Executar assim mesmo".
+
+            O caderno com interface gráfica não está nestes anexos: ele
+            tem dependências de sistema por plataforma e ainda é
+            compilado da fonte. Veja o manual em `docs/`.
