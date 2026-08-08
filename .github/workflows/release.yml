@@ -30,9 +30,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
-      # Uma plataforma que falhe não deve impedir a publicação das
-      # outras: é melhor o aluno de Windows ter o binário enquanto o de
-      # macOS espera do que ninguém ter nada.
+      # Não aborta as outras plataformas quando uma falha: numa release
+      # que estreia Windows e macOS, ver os três resultados de uma vez
+      # vale mais que economizar minutos de runner.
+      #
+      # Isso NÃO significa release parcial -- o job `publicar` depende de
+      # `build` inteiro, então basta uma plataforma falhar para nada ser
+      # publicado. É deliberado: uma release "1.0" a que falte
+      # silenciosamente o binário de Windows seria pior que release
+      # nenhuma.
       fail-fast: false
       matrix:
         include:
