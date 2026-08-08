@@ -830,8 +830,52 @@ pub fn classify_block(src: &str) -> Result<BlockKind, CliError> {
 /// that, not user data); `connection` has no symmetry group at all
 /// (Christoffel symbols aren't a tensor, same as `curvature::christoffel`
 /// already assumes).
+/// The line a saved notebook uses to separate one block from the next.
+///
+/// Canonical here, and re-used by `oderom_notebook::persist`, because
+/// both sides of the same file format have to agree on it and
+/// `oderom-notebook` already depends on this crate (never the reverse).
+pub const NOTEBOOK_BLOCK_DELIMITER: &str = "%%";
+
+/// Blanks out every line that is exactly [`NOTEBOOK_BLOCK_DELIMITER`],
+/// so a saved notebook is also a valid model file.
+///
+/// Notebooks and command-line files share the `.od` extension, and this
+/// is what makes that honest in both directions: opening a plain `.od`
+/// in the notebook already worked (it becomes one block), but passing a
+/// notebook to the command line used to stop at the first `%%` with
+/// `expected a declaration or an alias, found Sym('%')` -- an error
+/// about a character the person never typed, on a file the program
+/// itself had written.
+///
+/// Blanked, not removed: a deleted line would shift every line number
+/// after it, and parse errors report line and column. The one thing
+/// worse than a confusing error message is a confusing error message
+/// pointing at the wrong line.
+///
+/// Only a line that is *exactly* the delimiter counts, so `%` keeps
+/// whatever meaning it has anywhere else -- this reads lines, it does
+/// not change the grammar.
+fn blank_notebook_delimiters(src: &str) -> std::borrow::Cow<'_, str> {
+    let is_delimiter = |line: &str| line.trim_end_matches('\r') == NOTEBOOK_BLOCK_DELIMITER;
+    if !src.lines().any(is_delimiter) {
+        // The overwhelmingly common case (any file not written by the
+        // notebook) allocates nothing.
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let mut out = String::with_capacity(src.len());
+    for line in src.lines() {
+        if !is_delimiter(line) {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 pub fn parse_model(src: &str) -> Result<Model, CliError> {
-    let mut toks = TokStream::new(src)?;
+    let src = blank_notebook_delimiters(src);
+    let mut toks = TokStream::new(&src)?;
     // Computed once, up front, over the WHOLE document -- every alias
     // name this text will ever declare, regardless of position. Used
     // only to tell "genuinely never an alias" (silently an ordinary free
@@ -1682,6 +1726,51 @@ head W : TM*
         // `head NAME : SLOT` uses a bare `:` that is never immediately
         // followed by `=` -- must not be misread as an alias definition.
         assert_eq!(classify_block("head R : TM*, TM*").unwrap(), BlockKind::Declaration);
+    }
+
+    /// Um caderno salvo -- com as linhas `%%` que o separam em blocos --
+    /// e' um arquivo de modelo valido, porque as duas coisas dividem a
+    /// extensao `.od` e o aluno nao tem por que saber qual das duas ele
+    /// tem na mao.
+    #[test]
+    fn parse_model_reads_a_saved_notebook_delimiters_and_all() {
+        let caderno = "manifold M dim 4\n%%\nbundle TM on M dim 4\n%%\nchart c on M coords (t, r, theta, phi)\n";
+        let sem_delimitadores = caderno.replace("%%\n", "");
+        let modelo = match parse_model(caderno) {
+            Ok(m) => m,
+            Err(e) => panic!("um caderno salvo deveria ser um modelo valido: {e}"),
+        };
+        let liso = parse_model(&sem_delimitadores).ok().expect("o mesmo texto sem delimitadores ja era valido");
+        // Mesmo modelo dos dois jeitos: os delimitadores nao acrescentam
+        // nem tiram nada, so somem.
+        for nome in ["M"] {
+            assert!(modelo.registry.lookup_manifold(nome).is_ok(), "faltou {nome} no caderno");
+            assert!(liso.registry.lookup_manifold(nome).is_ok(), "faltou {nome} no arquivo liso");
+        }
+        assert!(modelo.registry.lookup_bundle("TM").is_ok(), "o bloco depois do primeiro %% se perdeu");
+        assert!(modelo.charts.contains_key("c"), "o bloco depois do segundo %% se perdeu");
+    }
+
+    /// Apagar a linha e nao remove-la: uma linha a menos deslocaria tudo
+    /// o que vem depois, e erros de parse reportam linha e coluna.
+    #[test]
+    fn blanking_a_delimiter_keeps_later_line_numbers_intact() {
+        let src = "manifold M dim 4\n%%\nbundle TM on M dim 4\n%%\nisto nao e uma declaracao\n";
+        let Err(CliError::Parse { position, .. }) = parse_model(src) else {
+            panic!("esperava um erro de parse");
+        };
+        assert_eq!(position.expect("um erro de parse deveria ter posicao").line, 5);
+    }
+
+    /// So a linha inteira conta: isto le linhas, nao muda a gramatica.
+    #[test]
+    fn a_percent_that_is_not_a_whole_delimiter_line_is_untouched() {
+        // `%%` com qualquer outra coisa na linha continua sendo o que
+        // sempre foi -- aqui, um erro, e no caractere que o usuario
+        // realmente escreveu.
+        let src = "manifold M dim 4\n%% isto nao e um delimitador\n";
+        let Err(erro) = parse_model(src) else { panic!("`%%` com texto na linha nao e delimitador, deveria falhar") };
+        assert!(format!("{erro}").contains('%'), "o erro deveria falar do %: {erro}");
     }
 
     #[test]

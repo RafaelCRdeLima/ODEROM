@@ -94,6 +94,15 @@ struct LoadGalleryArgs {
 #[derive(serde::Deserialize)]
 struct TextoArgs {
     texto: String,
+    /// O nome do arquivo que o aluno escolheu no seletor do navegador.
+    /// Opcional porque o Rust nunca depende dele -- é só o rótulo que o
+    /// cabeçalho mostra.
+    nome: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct NomeArgs {
+    nome: String,
 }
 
 // ---------------------------------------------------------------
@@ -232,7 +241,7 @@ pub fn load_gallery(a: &str) -> Result<String, String> {
     json(&ids)
 }
 
-/// O texto `.oderom` do notebook atual, para o JavaScript oferecer como
+/// O texto `.od` do notebook atual, para o JavaScript oferecer como
 /// download -- o análogo de `save_notebook` aqui, onde não existe
 /// caminho de arquivo para gravar.
 ///
@@ -249,7 +258,7 @@ pub fn notebook_text(a: &str) -> Result<String, String> {
     json(&texto)
 }
 
-/// Substitui o notebook atual pelo conteúdo de um arquivo `.oderom` que
+/// Substitui o notebook atual pelo conteúdo de um arquivo `.od` que
 /// o aluno escolheu no seletor do navegador -- o análogo de
 /// `open_notebook`, pela mesma razão e com a mesma divisão de trabalho
 /// que o [`notebook_text`] acima.
@@ -258,11 +267,30 @@ pub fn notebook_text(a: &str) -> Result<String, String> {
 /// (`oderom_notebook::load`): os blocos mostram seu texto e pronto.
 pub fn load_notebook_text(a: &str) -> Result<String, String> {
     let a: TextoArgs = args(a)?;
-    let mut notebook = Notebook::new();
-    for source in oderom_notebook::parse_sources(&a.texto) {
-        notebook.create_block_after(None, source);
-    }
+    // O `nome` e' o que o cabecalho passa a mostrar. Sem ele o caderno
+    // abre certo e continua se anunciando como "sem titulo", o que
+    // parece que nao abriu.
+    let notebook = oderom_notebook::load_from_text(&a.texto, a.nome.as_deref());
     NOTEBOOK.with(|n| *n.borrow_mut() = notebook);
+    nada()
+}
+
+/// Registra sob que nome o caderno acabou de ser baixado.
+///
+/// A outra metade de `save_notebook` no navegador. No desktop, o
+/// `oderom_notebook::save` escreve o arquivo *e* guarda o caminho numa
+/// operação só; aqui quem escreve é o navegador, então o Rust faz
+/// apenas a parte que é dele. O `backend.js` chama isto logo depois de
+/// disparar o download.
+///
+/// "Caminho" é uma palavra grande demais para o que chega aqui: uma
+/// página não sabe onde o download foi parar, e nem precisa. O que se
+/// guarda é o nome do arquivo, que é tudo o que o cabeçalho mostra
+/// (`renderHeader` já reduz o caminho ao último segmento de qualquer
+/// forma).
+pub fn set_current_name(a: &str) -> Result<String, String> {
+    let a: NomeArgs = args(a)?;
+    NOTEBOOK.with(|n| oderom_notebook::save_to_text(&mut n.borrow_mut(), &a.nome).map_err(|e| e.to_string()))?;
     nada()
 }
 

@@ -7,9 +7,13 @@
 use crate::block::Block;
 use crate::notebook::Notebook;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const DELIMITER: &str = "%%";
+// Do `oderom-cli`, e nao uma segunda constante com o mesmo valor: o
+// `parse_model` de la precisa reconhecer exatamente este delimitador
+// para que um caderno salvo tambem rode pela linha de comando, e duas
+// definicoes iguais so esperam o dia em que uma delas mudar.
+use oderom_cli::parser::NOTEBOOK_BLOCK_DELIMITER as DELIMITER;
 
 fn is_delimiter_line(line: &str) -> bool {
     line.trim_end_matches('\r') == DELIMITER
@@ -97,6 +101,44 @@ pub fn save(notebook: &mut Notebook, path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// [`save`] para hospedeiros que não têm sistema de arquivos: devolve o
+/// texto e passa a chamar o caderno de `name`, mas não escreve nada --
+/// quem escreve é o chamador.
+///
+/// Existe porque uma página não grava em caminho nenhum: o `.od` do
+/// navegador é um download, disparado pelo JavaScript. Sem esta função,
+/// o backend web teria de renderizar por um lado e registrar o nome por
+/// outro, e `set_current_path` é `pub(crate)` justamente para impedir
+/// isso -- o nome do caderno muda quando o caderno é salvo ou aberto, e
+/// em nenhuma outra ocasião. A regra continua valendo; o que muda é que
+/// "salvar" passou a ter duas formas.
+///
+/// `name` é só um rótulo (o que o cabeçalho mostra), nunca consultado
+/// pela lógica do [`Notebook`] -- a mesma condição que já vale para o
+/// caminho que [`save`] guarda.
+pub fn save_to_text(notebook: &mut Notebook, name: &str) -> Result<String, BlockContainsDelimiter> {
+    let text = render(notebook.blocks())?;
+    notebook.set_current_path(Some(PathBuf::from(name)));
+    Ok(text)
+}
+
+/// [`load`] a partir de texto já lido, pelo mesmo motivo que
+/// [`save_to_text`] existe: no navegador quem lê o arquivo é o seletor
+/// do próprio navegador, e o Rust recebe o conteúdo pronto.
+///
+/// `name` é opcional porque nem todo texto vem de um arquivo com nome.
+/// Como em [`load`], nada é executado: todo bloco começa `NeverRun`.
+pub fn load_from_text(text: &str, name: Option<&str>) -> Notebook {
+    let mut notebook = Notebook::new();
+    for source in parse_sources(text) {
+        notebook.create_block_after(None, source);
+    }
+    if let Some(name) = name {
+        notebook.set_current_path(Some(PathBuf::from(name)));
+    }
+    notebook
+}
+
 /// Reads `path` into a fresh [`Notebook`] -- every block starts
 /// `NeverRun`; nothing is executed and no `Session` state exists yet
 /// until the caller runs a block (DESIGN-NOTEBOOK.md section 7: opening
@@ -104,10 +146,10 @@ pub fn save(notebook: &mut Notebook, path: &Path) -> io::Result<()> {
 /// to restore).
 pub fn load(path: &Path) -> io::Result<Notebook> {
     let text = std::fs::read_to_string(path)?;
-    let mut notebook = Notebook::new();
-    for source in parse_sources(&text) {
-        notebook.create_block_after(None, source);
-    }
+    let mut notebook = load_from_text(&text, None);
+    // O caminho inteiro, e nao so o nome que `load_from_text` aceita:
+    // no desktop ele e' reutilizavel (um "salvar" seguinte grava aqui),
+    // enquanto no navegador nao ha caminho nenhum a guardar.
     notebook.set_current_path(Some(path.to_path_buf()));
     Ok(notebook)
 }

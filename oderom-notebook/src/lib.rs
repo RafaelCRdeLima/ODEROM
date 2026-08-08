@@ -20,7 +20,7 @@ mod persist;
 
 pub use block::{Block, BlockId, BlockOutput, DeclarationStatus};
 pub use notebook::{BeginExecution, Notebook};
-pub use persist::{load, parse_sources, render, save, BlockContainsDelimiter};
+pub use persist::{load, load_from_text, parse_sources, render, save, save_to_text, BlockContainsDelimiter};
 
 // The gallery catalog lives in `oderom-cli` (the bottom of the
 // dependency chain both this crate and the standalone CLI binary sit

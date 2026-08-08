@@ -3,7 +3,8 @@
 **Leia antes de editar qualquer arquivo deste diretório.**
 
 Os arquivos aqui (`index.html`, `notebook.js`, `notebook.css`,
-`oderom-mode.js`, `backend.js`, `vendor/`) servem a **dois** hospedeiros:
+`oderom-mode.js`, `backend.js`, `worker.js`, `vendor/`) servem a **dois**
+hospedeiros:
 
 1. **O app de desktop** (`oderom-app/src-tauri`), onde um webview do Tauri
    carrega esta pasta e o Rust responde por `#[tauri::command]`.
@@ -79,7 +80,7 @@ hospedeiro, e é aqui que mora o risco:
 
 | comando | desktop | navegador |
 |---|---|---|
-| `execute_block` / `cancel_block` | thread + cancelação profunda por unwind | roda síncrono; `cancel_block` não faz nada |
+| `execute_block` / `cancel_block` | thread + cancelação profunda por unwind | Web Worker; cancelar = encerrar o worker |
 | `open_notebook` / `save_notebook` | diálogo do sistema, caminho de arquivo | seletor do navegador e download (`backend.js`) |
 | `copy_to_clipboard` | `arboard` (área de transferência do SO) | `navigator.clipboard` (`backend.js`) |
 
@@ -88,25 +89,42 @@ existem no wasm (`notebook_text`, `load_notebook_text`): o Rust faz a metade
 que é dele, o navegador faz a dele, e o `notebook.js` continua chamando
 `save_notebook`/`open_notebook` sem saber de nada disso.
 
-Sobre o cancelamento: `wasm32` é `panic = "abort"` por construção, então o
-`catch_unwind` de `oderom-expr::cancel` não funciona lá (veja o comentário em
-`oderom-expr/src/cancel.rs`, onde a cancelação profunda é compilada fora no
-alvo wasm de propósito). E a página tem uma thread só — a mesma que estaria
-processando o clique em "Cancelar". O `cancel_block` do wasm existe,
-responde, e não faz nada; o doc comment dele explica por quê.
+## O Web Worker, e o preço do cancelamento
 
-## O próximo passo: Web Worker
+O `oderom-wasm` **não** roda na thread da página: ele vive em `worker.js`. É
+isso que faz a aba não congelar durante uma conta longa, e é isso que torna
+o cancelamento possível.
 
-Enquanto uma conta roda, a aba fica parada — é a consequência direta de
-haver uma thread só. Mover o `oderom-wasm` para dentro de um Web Worker
-resolve as duas coisas de uma vez: a página segue respondendo, e cancelar
-passa a ser possível (o JavaScript encerra o worker de fora).
+Por que não dá para cancelar por dentro: `wasm32` é `panic = "abort"` por
+construção, então o `catch_unwind` de `oderom-expr::cancel` não funciona lá
+(veja o comentário em `oderom-expr/src/cancel.rs`, onde a cancelação
+profunda é compilada fora nesse alvo). E o sinal por `Atomics` sobre
+`SharedArrayBuffer` — o caminho usual — exige cabeçalhos COOP/COEP que o
+GitHub Pages não deixa configurar. Sobra `worker.terminate()`, que é
+chamado da página e não depende de o worker cooperar.
 
-Não foi feito junto com a estreia do backend porque worker é uma mudança de
-**transporte** — toda chamada vira mensagem assíncrona, o `backend.js` muda
-inteiro — e misturar as duas faria com que qualquer falha tivesse duas
-causas possíveis. O contrato dos comandos não muda, então é uma mudança
-local ao `backend.js` e ao `oderom-wasm`, sem tocar no `notebook.js`.
+**Duas consequências.** A primeira, que o aluno vê: cancelar mata o worker, e
+com ele todo o estado calculado. O `backend.js` recria o worker e recarrega o texto do
+caderno (guardado antes de a conta começar), mas os resultados já obtidos
+não voltam. Na prática, **cancelar equivale a cancelar e limpar a
+execução** — o texto fica intacto, os resultados somem, e é preciso rodar as
+declarações de novo. É a menor degradação disponível: a alternativa seria
+não poder cancelar.
+
+A segunda é para quem programa: **os ids dos blocos mudam depois de um
+cancelamento**. O caderno é reconstruído a partir do texto, e o `Notebook`
+novo numera de zero. O `notebook.js` não se importa — ele redesenha tudo a
+cada `refresh()` e nunca guarda id entre uma chamada e outra — mas qualquer
+código que guarde um id do lado de fora precisa saber. O `backend.js`
+rastreia o bloco cancelado pela POSIÇÃO justamente por isso.
+
+O `backend.js` reproduz o resto do contrato do Tauri para que o
+`notebook.js` não precise saber de nada disso: `execute_block` volta na
+hora, o bloco aparece como `running`, uma segunda execução é recusada com
+`Blocked`. Enquanto o worker está ocupado, `list_blocks` é respondido a
+partir do último resultado conhecido, com o bloco em execução marcado — o
+worker não responderia, e sem isso o `pollUntilSettled` ficaria preso na
+fila, que é justamente o congelamento que o worker existe para evitar.
 
 ## Os DTOs são compartilhados, e o compilador cobra isso
 

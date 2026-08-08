@@ -34,7 +34,7 @@ Duas diferenças em relação ao aplicativo de desktop, ambas impostas pela
 plataforma e documentadas em
 [`oderom-app/dist/LEIA-ME.md`](oderom-app/dist/LEIA-ME.md): enquanto uma
 conta roda, a aba fica parada (a página tem uma thread só), e por isso
-"Cancelar" não tem efeito lá. Salvar baixa um arquivo `.oderom`, no mesmo
+"Cancelar" não tem efeito lá. Salvar baixa um arquivo `.od`, no mesmo
 formato que o aplicativo lê.
 
 ### Na linha de comando

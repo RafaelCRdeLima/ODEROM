@@ -105,5 +105,6 @@ exportar!(
     load_gallery,
     notebook_text,
     load_notebook_text,
+    set_current_name,
     frontend_ready,
 );
